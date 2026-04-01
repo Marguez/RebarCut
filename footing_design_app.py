@@ -12,6 +12,6 @@ import streamlit as st
 import math
 import pandas as pd
 
-st.set_page_config(page_title="Footing Design Calculator", layout="wide")
-st.title("Footing Design Calculator — Area, Shear & Reinforcement")
+st.set_page_config(page_title="Optimize Rebar Splice", layout="wide")
+st.title("Beam Rebar Splice Optimization")
 
