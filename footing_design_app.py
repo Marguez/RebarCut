@@ -14,15 +14,12 @@ st.title("🏗️ Beam Rebar Optimizer")
 # ══════════════════════════════════════════════════════════════════════════════
 st.subheader("Rebar Parameters")
 
-# --- Db and Anc first (Hk/Emb defaults depend on these) ---
 c1, c2 = st.columns(2)
 with c1:
     Db  = st.number_input("Db — Rebar diameter (mm)",    min_value=6,   max_value=50,   value=25,  step=1)
 with c2:
     Anc = st.number_input("Anc — Anchorage length (mm)", min_value=100, max_value=2000, value=680, step=10)
 
-# --- Hk and Emb: editable, defaults computed from Db/Anc ---
-# Use session state to detect when Db/Anc change so we can reset defaults
 prev_Db  = st.session_state.get("prev_Db",  Db)
 prev_Anc = st.session_state.get("prev_Anc", Anc)
 params_changed = (Db != prev_Db) or (Anc != prev_Anc)
@@ -30,41 +27,30 @@ params_changed = (Db != prev_Db) or (Anc != prev_Anc)
 default_Hk  = 12 * Db
 default_Emb = Anc - default_Hk
 
-# Reset stored overrides if Db or Anc changed
 if params_changed:
     st.session_state["Hk_val"]  = default_Hk
     st.session_state["Emb_val"] = default_Emb
     st.session_state["prev_Db"]  = Db
     st.session_state["prev_Anc"] = Anc
 
-# Initialise if first run
-if "Hk_val" not in st.session_state:
-    st.session_state["Hk_val"] = default_Hk
-if "Emb_val" not in st.session_state:
-    st.session_state["Emb_val"] = default_Emb
+if "Hk_val"  not in st.session_state: st.session_state["Hk_val"]  = default_Hk
+if "Emb_val" not in st.session_state: st.session_state["Emb_val"] = default_Emb
 
 c3, c4 = st.columns(2)
 with c3:
     Hk = st.number_input(
         f"Hk — Hook length (mm)  *(default: 12 × Db = {default_Hk})*",
-        min_value=0, max_value=2000,
-        value=st.session_state["Hk_val"], step=10,
-        key="Hk_input",
+        min_value=0, max_value=2000, value=st.session_state["Hk_val"], step=10, key="Hk_input",
     )
     st.session_state["Hk_val"] = Hk
-
 with c4:
     Emb = st.number_input(
         f"Emb — Embedment length (mm)  *(default: Anc − Hk = {default_Emb})*",
-        min_value=0, max_value=2000,
-        value=st.session_state["Emb_val"], step=10,
-        key="Emb_input",
+        min_value=0, max_value=2000, value=st.session_state["Emb_val"], step=10, key="Emb_input",
     )
     st.session_state["Emb_val"] = Emb
 
 st.markdown("")
-
-# --- Lap splice lengths ---
 st.markdown("**Lap Splice Lengths**")
 c1, c2 = st.columns(2)
 with c1:
@@ -73,8 +59,6 @@ with c2:
     LapB = st.number_input("LapB — Bottom lap splice length (mm)", min_value=100, max_value=3000, value=650, step=10)
 
 st.markdown("")
-
-# --- Splice zones ---
 st.markdown("**Splice Zones** *(as fraction of clear span)*")
 c1, c2 = st.columns(2)
 with c1:
@@ -86,7 +70,6 @@ with c2:
     SplBEx = st.number_input("SplBEx — Bottom, Exterior span", min_value=0.0, max_value=1.0, value=0.20, step=0.01, format="%.2f")
     SplBIn = st.number_input("SplBIn — Bottom, Interior span", min_value=0.0, max_value=1.0, value=0.20, step=0.01, format="%.2f")
 
-# Persist rebar params
 for k, v in {"Db": Db, "Anc": Anc, "Hk": Hk, "Emb": Emb,
              "LapT": LapT, "LapB": LapB,
              "SplTEx": SplTEx, "SplTIn": SplTIn,
@@ -100,7 +83,6 @@ st.markdown("---")
 st.subheader("Structure Geometry")
 
 no_spans = int(st.number_input("Number of spans", min_value=1, max_value=20, value=2, step=1))
-
 st.markdown("Enter column widths and span lengths in **mm**:")
 
 n_cols = no_spans + 1
@@ -122,34 +104,35 @@ for i in range(no_spans):
     c1, c2, c3 = st.columns([1, 2, 1])
     with c1:
         col_widths[i] = st.number_input(
-            f"C{i + 1} (mm)", min_value=100, max_value=3000,
+            f"C{i+1} (mm)", min_value=100, max_value=3000,
             value=col_widths[i], step=50, key=f"cw_{i}",
         )
     with c2:
         span_lengths[i] = st.number_input(
-            f"L{i + 1} (mm)", min_value=500, max_value=50000,
+            f"L{i+1} (mm)", min_value=500, max_value=50000,
             value=span_lengths[i], step=100, key=f"sl_{i}",
         )
     if i == no_spans - 1:
         with c3:
-            col_widths[n_cols - 1] = st.number_input(
+            col_widths[n_cols-1] = st.number_input(
                 f"C{n_cols} (mm)", min_value=100, max_value=3000,
-                value=col_widths[n_cols - 1], step=50, key=f"cw_{n_cols - 1}",
+                value=col_widths[n_cols-1], step=50, key=f"cw_{n_cols-1}",
             )
 
 st.session_state["col_widths"]   = col_widths
 st.session_state["span_lengths"] = span_lengths
 
-# ── Clear span computation ──────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 3 — CLEAR SPAN LENGTHS
+# ══════════════════════════════════════════════════════════════════════════════
 st.markdown("---")
 st.subheader("Clear Span Lengths")
-st.markdown("Formula: **Sᵢ = Lᵢ − 0.5 × Cᵢ − 0.5 × C(i+1)**")
-st.markdown("")
+st.markdown("**Sᵢ = Lᵢ − 0.5 × Cᵢ − 0.5 × C(i+1)**")
 
-clear_spans = []
-for i in range(no_spans):
-    s = span_lengths[i] - 0.5 * col_widths[i] - 0.5 * col_widths[i + 1]
-    clear_spans.append(s)
+clear_spans = [
+    span_lengths[i] - 0.5 * col_widths[i] - 0.5 * col_widths[i+1]
+    for i in range(no_spans)
+]
 
 h1, h2, h3, h4 = st.columns([1, 2, 2, 2])
 h1.markdown("**Span**")
@@ -158,28 +141,160 @@ h3.markdown("**− 0.5C − 0.5C (mm)**")
 h4.markdown("**Clear Span S (mm)**")
 
 for i in range(no_spans):
-    deduction = 0.5 * col_widths[i] + 0.5 * col_widths[i + 1]
+    deduction = 0.5 * col_widths[i] + 0.5 * col_widths[i+1]
     r1, r2, r3, r4 = st.columns([1, 2, 2, 2])
-    r1.write(f"S{i + 1}")
+    r1.write(f"S{i+1}")
     r2.write(f"{span_lengths[i]:,}")
     r3.write(f"− {deduction:,.0f}")
     r4.write(f"**{clear_spans[i]:,.0f}**")
 
 st.markdown("---")
 total = sum(col_widths) + sum(span_lengths)
-st.metric("Total Beam Length", f"{total:,} mm  ({total / 1000:.3f} m)")
+st.metric("Total Beam Length", f"{total:,} mm  ({total/1000:.3f} m)")
 
 st.session_state["clear_spans"]       = clear_spans
 st.session_state["no_spans"]          = no_spans
 st.session_state["total_beam_length"] = total
 
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 4 — SPLICE ZONES
+# ══════════════════════════════════════════════════════════════════════════════
+st.markdown("---")
+st.subheader("Splice Zones")
+st.markdown("Maximum splice zone length from each support face (mm).")
+
+# ── TOP BARS ──────────────────────────────────────────────────────────────────
+# Each span has a LEFT zone and a RIGHT zone.
+#
+# Span 1 (exterior):
+#   Left  = SplTEx * S1
+#   Right = SplTIn * max(S1, S2)          [if only 1 span: SplTEx * S1]
+#
+# Span i (interior, 1 < i < n):
+#   Left  = SplTIn * max(S(i-1), Si)
+#   Right = SplTIn * max(Si, S(i+1))
+#
+# Span n (exterior):
+#   Left  = SplTIn * max(S(n-1), Sn)      [if only 1 span: SplTEx * Sn]
+#   Right = SplTEx * Sn
+
+def top_splice_zone(i, clear_spans, SplTEx, SplTIn, no_spans):
+    """Return (left_zone, right_zone) for top bars at span index i (0-based)."""
+    S = clear_spans
+    n = no_spans
+
+    # LEFT side
+    if i == 0:
+        left = SplTEx * S[0]
+    else:
+        left = SplTIn * max(S[i-1], S[i])
+
+    # RIGHT side
+    if i == n - 1:
+        right = SplTEx * S[n-1]
+    else:
+        right = SplTIn * max(S[i], S[i+1])
+
+    return left, right
+
+def bot_splice_zone(i, clear_spans, SplBEx, SplBIn, no_spans):
+    """Return (left_zone, right_zone) for bottom bars at span index i (0-based)."""
+    S = clear_spans
+    n = no_spans
+
+    if i == 0:
+        left = SplBEx * S[0]
+    else:
+        left = SplBIn * max(S[i-1], S[i])
+
+    if i == n - 1:
+        right = SplBEx * S[n-1]
+    else:
+        right = SplBIn * max(S[i], S[i+1])
+
+    return left, right
+
+# ── Print Top Bars ────────────────────────────────────────────────────────────
+st.markdown("**Top Bars**")
+
+top_zones = []
+h1, h2, h3, h4, h5 = st.columns([1, 2, 3, 2, 3])
+h1.markdown("**Span**")
+h2.markdown("**Left zone (mm)**")
+h3.markdown("**Formula**")
+h4.markdown("**Right zone (mm)**")
+h5.markdown("**Formula**")
+
+for i in range(no_spans):
+    lz, rz = top_splice_zone(i, clear_spans, SplTEx, SplTIn, no_spans)
+    top_zones.append({"left": lz, "right": rz})
+
+    # Build formula strings for display
+    if i == 0:
+        lf_str = f"SplTEx × S{i+1} = {SplTEx} × {clear_spans[i]:,.0f}"
+    else:
+        adj = max(clear_spans[i-1], clear_spans[i])
+        lf_str = f"SplTIn × max(S{i},S{i+1}) = {SplTIn} × {adj:,.0f}"
+
+    if i == no_spans - 1:
+        rf_str = f"SplTEx × S{i+1} = {SplTEx} × {clear_spans[i]:,.0f}"
+    else:
+        adj = max(clear_spans[i], clear_spans[i+1])
+        rf_str = f"SplTIn × max(S{i+1},S{i+2}) = {SplTIn} × {adj:,.0f}"
+
+    r1, r2, r3, r4, r5 = st.columns([1, 2, 3, 2, 3])
+    r1.write(f"S{i+1}")
+    r2.write(f"**{lz:,.0f}**")
+    r3.write(lf_str)
+    r4.write(f"**{rz:,.0f}**")
+    r5.write(rf_str)
+
+# ── Print Bottom Bars ─────────────────────────────────────────────────────────
+st.markdown("")
+st.markdown("**Bottom Bars**")
+
+bot_zones = []
+h1, h2, h3, h4, h5 = st.columns([1, 2, 3, 2, 3])
+h1.markdown("**Span**")
+h2.markdown("**Left zone (mm)**")
+h3.markdown("**Formula**")
+h4.markdown("**Right zone (mm)**")
+h5.markdown("**Formula**")
+
+for i in range(no_spans):
+    lz, rz = bot_splice_zone(i, clear_spans, SplBEx, SplBIn, no_spans)
+    bot_zones.append({"left": lz, "right": rz})
+
+    if i == 0:
+        lf_str = f"SplBEx × S{i+1} = {SplBEx} × {clear_spans[i]:,.0f}"
+    else:
+        adj = max(clear_spans[i-1], clear_spans[i])
+        lf_str = f"SplBIn × max(S{i},S{i+1}) = {SplBIn} × {adj:,.0f}"
+
+    if i == no_spans - 1:
+        rf_str = f"SplBEx × S{i+1} = {SplBEx} × {clear_spans[i]:,.0f}"
+    else:
+        adj = max(clear_spans[i], clear_spans[i+1])
+        rf_str = f"SplBIn × max(S{i+1},S{i+2}) = {SplBIn} × {adj:,.0f}"
+
+    r1, r2, r3, r4, r5 = st.columns([1, 2, 3, 2, 3])
+    r1.write(f"S{i+1}")
+    r2.write(f"**{lz:,.0f}**")
+    r3.write(lf_str)
+    r4.write(f"**{rz:,.0f}**")
+    r5.write(rf_str)
+
+st.session_state["top_zones"] = top_zones
+st.session_state["bot_zones"] = bot_zones
+
 # ── Confirm ─────────────────────────────────────────────────────────────────────
+st.markdown("---")
 if st.button("Confirm →"):
     cursor = 0
     positions = {}
     for i in range(n_cols):
         cw = col_widths[i]
-        positions[f"C{i + 1}"] = {
+        positions[f"C{i+1}"] = {
             "left_face":  cursor,
             "right_face": cursor + cw,
             "centerline": cursor + cw / 2,
