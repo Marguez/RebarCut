@@ -1,6 +1,6 @@
 """
 BEAM REBAR CUTTING OPTIMIZER
-Step 1: Structure Geometry Input
+Step 1: Rebar Parameters + Structure Geometry Input
 """
 
 import streamlit as st
@@ -8,15 +8,71 @@ import streamlit as st
 st.set_page_config(page_title="Beam Rebar Optimizer", page_icon="🏗️")
 
 st.title("🏗️ Beam Rebar Optimizer")
-st.subheader("Step 1 — Beam Geometry")
 
-# ── Number of spans ─────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 1 — REBAR PARAMETERS
+# ══════════════════════════════════════════════════════════════════════════════
+st.subheader("Rebar Parameters")
+
+# --- Primary inputs ---
+Db  = st.number_input("Db — Rebar diameter (mm)",          min_value=6,   max_value=50,   value=25,  step=1)
+Anc = st.number_input("Anc — Anchorage length (mm)",       min_value=100, max_value=2000, value=680, step=10)
+
+# --- Derived (shown as read-only info) ---
+Hk  = 12 * Db
+Emb = Anc - Hk
+
+col_a, col_b = st.columns(2)
+col_a.info(f"**Hk** = 12 × Db = 12 × {Db} = **{Hk} mm**")
+col_b.info(f"**Emb** = Anc − Hk = {Anc} − {Hk} = **{Emb} mm**")
+
+st.markdown("")
+
+# --- Lap splice lengths ---
+st.markdown("**Lap Splice Lengths**")
+c1, c2 = st.columns(2)
+with c1:
+    LapT = st.number_input("LapT — Top lap splice length (mm)",    min_value=100, max_value=3000, value=800, step=10)
+with c2:
+    LapB = st.number_input("LapB — Bottom lap splice length (mm)", min_value=100, max_value=3000, value=650, step=10)
+
+st.markdown("")
+
+# --- Splice zones ---
+st.markdown("**Splice Zones** *(as fraction of clear span)*")
+
+c1, c2 = st.columns(2)
+with c1:
+    st.markdown("*Top bars*")
+    SplTEx = st.number_input("SplTEx — Top, Exterior span", min_value=0.0, max_value=1.0, value=0.25, step=0.01, format="%.2f")
+    SplTIn = st.number_input("SplTIn — Top, Interior span", min_value=0.0, max_value=1.0, value=0.33, step=0.01, format="%.2f")
+with c2:
+    st.markdown("*Bottom bars*")
+    SplBEx = st.number_input("SplBEx — Bottom, Exterior span", min_value=0.0, max_value=1.0, value=0.20, step=0.01, format="%.2f")
+    SplBIn = st.number_input("SplBIn — Bottom, Interior span", min_value=0.0, max_value=1.0, value=0.20, step=0.01, format="%.2f")
+
+# Persist rebar params
+st.session_state["Db"]     = Db
+st.session_state["Anc"]    = Anc
+st.session_state["Hk"]     = Hk
+st.session_state["Emb"]    = Emb
+st.session_state["LapT"]   = LapT
+st.session_state["LapB"]   = LapB
+st.session_state["SplTEx"] = SplTEx
+st.session_state["SplTIn"] = SplTIn
+st.session_state["SplBEx"] = SplBEx
+st.session_state["SplBIn"] = SplBIn
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 2 — STRUCTURE GEOMETRY
+# ══════════════════════════════════════════════════════════════════════════════
+st.markdown("---")
+st.subheader("Structure Geometry")
+
 no_spans = int(st.number_input("Number of spans", min_value=1, max_value=20, value=2, step=1))
 
-st.markdown("---")
 st.markdown("Enter column widths and span lengths in **mm**:")
 
-# ── Initialise storage ──────────────────────────────────────────────────────────
 n_cols = no_spans + 1
 
 if "col_widths" not in st.session_state or len(st.session_state["col_widths"]) != n_cols:
@@ -27,13 +83,13 @@ if "span_lengths" not in st.session_state or len(st.session_state["span_lengths"
 col_widths   = list(st.session_state["col_widths"])
 span_lengths = list(st.session_state["span_lengths"])
 
-# ── Header row ──────────────────────────────────────────────────────────────────
+# Header
 h1, h2, h3 = st.columns([1, 2, 1])
 h1.markdown("**Column**")
 h2.markdown("**Span Length (mm)**")
 h3.markdown("**Column**")
 
-# ── One row per span ─────────────────────────────────────────────────────────────
+# One row per span
 for i in range(no_spans):
     c1, c2, c3 = st.columns([1, 2, 1])
 
@@ -44,7 +100,6 @@ for i in range(no_spans):
             value=col_widths[i], step=50,
             key=f"cw_{i}",
         )
-
     with c2:
         span_lengths[i] = st.number_input(
             f"L{i + 1} (mm)",
@@ -52,7 +107,6 @@ for i in range(no_spans):
             value=span_lengths[i], step=100,
             key=f"sl_{i}",
         )
-
     if i == no_spans - 1:
         with c3:
             col_widths[n_cols - 1] = st.number_input(
@@ -62,7 +116,6 @@ for i in range(no_spans):
                 key=f"cw_{n_cols - 1}",
             )
 
-# Persist
 st.session_state["col_widths"]   = col_widths
 st.session_state["span_lengths"] = span_lengths
 
@@ -77,30 +130,30 @@ for i in range(no_spans):
     s = span_lengths[i] - 0.5 * col_widths[i] - 0.5 * col_widths[i + 1]
     clear_spans.append(s)
 
-# Print as a simple table
-header_cols = st.columns([1, 2, 2, 2])
-header_cols[0].markdown("**Span**")
-header_cols[1].markdown("**L (mm)**")
-header_cols[2].markdown("**− 0.5C − 0.5C (mm)**")
-header_cols[3].markdown("**Clear Span S (mm)**")
+h1, h2, h3, h4 = st.columns([1, 2, 2, 2])
+h1.markdown("**Span**")
+h2.markdown("**L (mm)**")
+h3.markdown("**− 0.5C − 0.5C (mm)**")
+h4.markdown("**Clear Span S (mm)**")
 
 for i in range(no_spans):
     deduction = 0.5 * col_widths[i] + 0.5 * col_widths[i + 1]
-    row = st.columns([1, 2, 2, 2])
-    row[0].write(f"S{i + 1}")
-    row[1].write(f"{span_lengths[i]:,}")
-    row[2].write(f"− {deduction:,.0f}")
-    row[3].write(f"**{clear_spans[i]:,.0f}**")
+    r1, r2, r3, r4 = st.columns([1, 2, 2, 2])
+    r1.write(f"S{i + 1}")
+    r2.write(f"{span_lengths[i]:,}")
+    r3.write(f"− {deduction:,.0f}")
+    r4.write(f"**{clear_spans[i]:,.0f}**")
 
 st.markdown("---")
 total = sum(col_widths) + sum(span_lengths)
 st.metric("Total Beam Length", f"{total:,} mm  ({total / 1000:.3f} m)")
 
-# Persist clear spans
-st.session_state["clear_spans"] = clear_spans
+st.session_state["clear_spans"]     = clear_spans
+st.session_state["no_spans"]        = no_spans
+st.session_state["total_beam_length"] = total
 
-# ── Confirm ──────────────────────────────────────────────────────────────────────
-if st.button("Confirm Geometry →"):
+# ── Confirm ─────────────────────────────────────────────────────────────────────
+if st.button("Confirm →"):
     cursor = 0
     positions = {}
     for i in range(n_cols):
@@ -117,6 +170,4 @@ if st.button("Confirm Geometry →"):
 
     st.session_state["geometry_confirmed"] = True
     st.session_state["column_positions"]   = positions
-    st.session_state["no_spans"]           = no_spans
-    st.session_state["total_beam_length"]  = total
-    st.success("Geometry confirmed! Ready for Step 2.")
+    st.success("Confirmed! Ready for the next step.")
