@@ -1,6 +1,6 @@
 """
 BEAM REBAR CUTTING OPTIMIZER
-Step 1: Rebar Parameters + Structure Geometry + Splice Zones + Running Lengths R1 & R2
+Full Running Length Series — Top Bars
 """
 
 import streamlit as st
@@ -228,140 +228,239 @@ def waste_row(length, com_lengths):
     return cl, w
 
 def print_rl_table(rows):
-    h1, h2, h3, h4 = st.columns([1, 2, 2, 2])
+    h1, h2, h3, h4, h5 = st.columns([1.5, 2, 2, 2, 2])
     h1.markdown("**Label**")
     h2.markdown("**Running Length (mm)**")
     h3.markdown("**Com. Length (mm)**")
     h4.markdown("**Waste (mm)**")
+    h5.markdown("**Cumul. Waste (mm)**")
     for row in rows:
-        c1, c2, c3, c4 = st.columns([1, 2, 2, 2])
+        c1, c2, c3, c4, c5 = st.columns([1.5, 2, 2, 2, 2])
         c1.write(row["label"])
         c2.write(f"{row['running_length']:,.0f}")
         if row["com_length"] is None:
-            c3.write("— exceeds max —"); c4.write("—")
+            c3.write("— exceeds max —"); c4.write("—"); c5.write("—")
         else:
             c3.write(f"{row['com_length']:,.0f}")
             c4.write(f"{row['waste']:,.0f}")
+            cw = row.get("cum_waste")
+            c5.write(f"{cw:,.0f}" if cw is not None else "—")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 5 — R1 SERIES (TOP BARS)
+# CORE ENGINE — generate all series recursively
 # ══════════════════════════════════════════════════════════════════════════════
-st.markdown("---")
-st.subheader("R1 Series — Top Bars")
-st.markdown("Bars starting at the **left hook of Span 1**, terminating at successive left splice zones.")
+#
+# Each "bar" is described by:
+#   label       : e.g. "R2BA"
+#   running_length
+#   com_length
+#   waste
+#   cum_waste   : sum of waste of this bar + all ancestors
+#   span_idx    : span (0-based) where this bar terminates (left splice zone)
+#                 OR no_spans-1 flagged as terminal (hook end)
+#   is_terminal : True if this bar ends with Emb+Hk at the last column
+#   parent_waste: cumulative waste inherited from the parent chain
+#
+# Terminal condition for a bar ending in last span:
+#   length = (S[last] - left_zone[last]) + Emb + Hk
+#   (starts at beginning of left splice zone of last span, goes to right hook)
+#
+# Mid-series bar from span p to span q (q > p, not yet last):
+#   length = (S[p] - left_zone[p]) + col[p+1]
+#            + sum over k in p+1..q-1 of (S[k] + col[k+1])
+#            + left_zone[q] + LapT
+#
+# R1 (first series) is special — starts from left hook:
+#   length = Hk + Emb + [spans/cols] + left_zone[j] + LapT   (non-terminal)
+#   terminal R1 (if last span reachable):
+#   length = Hk + Emb + [spans/cols through last span] + Emb + Hk
+#            but that is just a full-beam bar handled separately.
 
-r1_series = []
+def mid_bar_length(p, q, clear_spans, col_widths, top_zones, LapT):
+    """Length of a bar that starts at the beginning of left_zone[p] and
+    terminates at the end of the lap in left_zone[q]."""
+    dist = clear_spans[p] - top_zones[p]["left"]   # remainder of span p
+    dist += col_widths[p + 1]                       # column right of span p
+    for k in range(p + 1, q):
+        dist += clear_spans[k] + col_widths[k + 1]
+    dist += top_zones[q]["left"] + LapT
+    return dist
+
+def terminal_bar_length(p, clear_spans, col_widths, top_zones, Hk, Emb, no_spans):
+    """Length of a bar that starts at the beginning of left_zone[p] and
+    terminates through the last span to the right hook."""
+    last = no_spans - 1
+    dist = clear_spans[p] - top_zones[p]["left"]   # remainder of span p
+    dist += col_widths[p + 1]
+    for k in range(p + 1, last):
+        dist += clear_spans[k] + col_widths[k + 1]
+    # last span: full clear span + Emb + Hk on the right
+    if p < last:
+        dist += clear_spans[last]
+    dist += Emb + Hk
+    return dist
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Build all series
+# ──────────────────────────────────────────────────────────────────────────────
+
+all_series = []   # list of lists; all_series[0] = R1 bars, [1] = R2 bars, …
+
+# ── R1 series ──
+r1_bars = []
 for j in range(no_spans):
-    # Distance from hook bend to termination:
-    # Emb (into C1) + spans/cols traversed + left_zone[j] + LapT
     dist = Emb
     for k in range(j):
         dist += clear_spans[k] + col_widths[k + 1]
-    rl = Hk + dist + top_zones[j]["left"] + LapT
 
+    # Non-terminal: terminates at left_zone[j] + LapT
+    rl = Hk + dist + top_zones[j]["left"] + LapT
     cl, w = waste_row(rl, com_lengths)
-    r1_series.append({
+
+    r1_bars.append({
         "label":          f"R1{ALPHA[j]}",
         "running_length": rl,
         "com_length":     cl,
         "waste":          w,
+        "cum_waste":      w,
         "span_idx":       j,
+        "is_terminal":    False,
+        "parent_waste":   0,
+        "suffix":         ALPHA[j],   # label suffix chain for children
     })
+
     if cl is None:
+        break   # exceeded max — no point going further right
+
+    # Check: can this same R1 bar be extended to a terminal (hook) ending?
+    # That would be a different bar altogether — handled in higher series.
+
+all_series.append(r1_bars)
+
+# ── Higher series (R2, R3, …) ──
+series_idx = 2
+parent_bars = r1_bars
+
+while True:
+    new_bars   = []
+    series_chr = str(series_idx)
+
+    for parent in parent_bars:
+        if parent["com_length"] is None:
+            continue
+        if parent["is_terminal"]:
+            continue   # already ended with a hook — no continuation
+
+        p            = parent["span_idx"]
+        parent_waste = parent["cum_waste"] if parent["cum_waste"] is not None else 0
+        parent_sfx   = parent["suffix"]    # e.g. "A", "BA", "CBA"
+
+        children = []
+
+        # ── Option 1: mid-span terminations (left splice zones of spans q > p) ──
+        for q in range(p + 1, no_spans):
+            sub_sfx   = ALPHA[q - p - 1]   # A, B, C…
+            child_lbl = f"R{series_chr}{parent_sfx}{sub_sfx}"
+
+            rl      = mid_bar_length(p, q, clear_spans, col_widths, top_zones, LapT)
+            cl, w   = waste_row(rl, com_lengths)
+            cum_w   = (parent_waste + w) if w is not None else None
+
+            children.append({
+                "label":        child_lbl,
+                "running_length": rl,
+                "com_length":   cl,
+                "waste":        w,
+                "cum_waste":    cum_w,
+                "span_idx":     q,
+                "is_terminal":  False,
+                "parent_waste": parent_waste,
+                "suffix":       parent_sfx + sub_sfx,
+            })
+
+            if cl is None:
+                break   # exceeded max — don't try further spans
+
+        # ── Option 2: terminal ending (last span → right hook) ──
+        # Only add if the last mid-span option didn't already reach the last span
+        # OR if the mid-span version to the last span exceeds max_com.
+        last = no_spans - 1
+        if p < last:
+            term_rl = terminal_bar_length(p, clear_spans, col_widths, top_zones, Hk, Emb, no_spans)
+            term_cl, term_w = waste_row(term_rl, com_lengths)
+            term_cum_w = (parent_waste + term_w) if term_w is not None else None
+            term_sfx   = parent_sfx + "T"   # "T" marks terminal
+
+            # Only add terminal if:
+            # (a) we haven't already added a mid-span bar reaching the last span, OR
+            # (b) the mid-span bar to the last span exceeded max_com
+            last_mid_exceeds = (
+                len(children) > 0 and
+                children[-1]["span_idx"] == last and
+                children[-1]["com_length"] is None
+            )
+            last_mid_reached = any(c["span_idx"] == last and not c["is_terminal"] for c in children)
+
+            if last_mid_exceeds or not last_mid_reached:
+                children.append({
+                    "label":          f"R{series_chr}{parent_sfx}T",
+                    "running_length": term_rl,
+                    "com_length":     term_cl,
+                    "waste":          term_w,
+                    "cum_waste":      term_cum_w,
+                    "span_idx":       last,
+                    "is_terminal":    True,
+                    "parent_waste":   parent_waste,
+                    "suffix":         term_sfx,
+                })
+
+        new_bars.extend(children)
+
+    if not new_bars:
         break
 
-if com_lengths:
-    print_rl_table(r1_series)
-else:
-    st.warning("Select at least one commercial length.")
+    all_series.append(new_bars)
+    parent_bars = new_bars
+    series_idx += 1
 
-st.session_state["r1_series"] = r1_series
+    if series_idx > 30:   # safety cap
+        break
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 6 — R2 SERIES (TOP BARS)
+# PRINT ALL SERIES
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("---")
-st.subheader("R2 Series — Top Bars")
-st.markdown(
-    "Each R2 bar **starts at the beginning of the splice zone** where R1 terminated "
-    "and overlaps R1 by LapT. It then travels rightward to terminate at the beginning "
-    "of the left splice zone of a further span."
-)
+st.subheader("Running Length Series — Top Bars")
 
-# ── R2 formula (corrected) ─────────────────────────────────────────────────────
-#
-# R1x terminated at span p (0-based). The lap starts at the BEGINNING of the
-# left splice zone of span p, so:
-#
-#   R2 start ← beginning of left_zone[p]
-#   R2 end   ← beginning of left_zone[q] + LapT   (q > p)
-#
-# The R2 bar length is therefore the distance from the start of left_zone[p]
-# to the end of the lap at left_zone[q]:
-#
-#   dist = (S[p] - left_zone[p])      ← remainder of span p after splice start
-#        + col_widths[p+1]             ← column immediately right of span p
-#        + [for k in p+1..q-1: S[k] + col_widths[k+1]]   ← interior spans/cols
-#        + left_zone[q] + LapT         ← into span q up to end of lap
-#
-# For q = p+1 (adjacent span, first R2 option):
-#   dist = (S[p] - left_zone[p]) + col_widths[p+1] + left_zone[p+1] + LapT
+for s_idx, series_bars in enumerate(all_series):
+    series_num = s_idx + 1
+    st.markdown(f"### R{series_num} Series")
 
-r2_all = []
+    if series_num == 1:
+        # R1 has no grouping — flat list
+        print_rl_table(series_bars)
+    else:
+        # Group by parent label (first N-1 chars of label after "R{n}")
+        printed_parents = set()
+        for bar in series_bars:
+            # Derive parent label: strip last character of the suffix
+            parent_sfx = bar["suffix"][:-1] if not bar["is_terminal"] else bar["suffix"][:-2]
+            # Simpler: group by parent_waste key — use label up to last char
+            parent_label_key = bar["label"][:-1] if not bar["label"].endswith("T") else bar["label"][:-2]
 
-for r1 in r1_series:
-    if r1["com_length"] is None:
-        continue
+            if parent_label_key not in printed_parents:
+                printed_parents.add(parent_label_key)
+                # Find parent bar
+                parent_series = all_series[s_idx - 1]
+                matching = [b for b in parent_series if b["suffix"] == bar["suffix"][:-1]]
+                if matching:
+                    pm = matching[0]
+                    st.markdown(f"**Splicing with {pm['label']}** *(terminated at Span {pm['span_idx']+1} left zone)*")
 
-    p         = r1["span_idx"]
-    r1_suffix = r1["label"][-1]   # "A", "B", …
+            # Print this bar
+            print_rl_table([bar])
 
-    if p >= no_spans - 1:
-        continue   # no span to the right
-
-    r2_parent = []
-
-    for q in range(p + 1, no_spans):
-        sub_label = ALPHA[q - p - 1]   # A for first reach, B for second, …
-
-        # Remainder of span p from start of its left splice zone to its right end
-        dist = clear_spans[p] - top_zones[p]["left"]
-
-        # Column immediately to the right of span p
-        dist += col_widths[p + 1]
-
-        # Travel through interior spans p+1 .. q-1
-        for k in range(p + 1, q):
-            dist += clear_spans[k] + col_widths[k + 1]
-
-        # Into span q: left splice zone + lap
-        dist += top_zones[q]["left"] + LapT
-
-        cl, w = waste_row(dist, com_lengths)
-        r2_parent.append({
-            "label":          f"R2{r1_suffix}{sub_label}",
-            "running_length": dist,
-            "com_length":     cl,
-            "waste":          w,
-            "r1_parent":      r1["label"],
-            "from_span":      p,
-            "to_span":        q,
-        })
-
-        if cl is None:
-            break
-
-    r2_all.extend(r2_parent)
-
-    if r2_parent:
-        st.markdown(f"**Splicing with {r1['label']}** *(R1 terminated at left zone of Span {p+1})*")
-        print_rl_table(r2_parent)
-        st.markdown("")
-
-if not r2_all:
-    st.info("No R2 bars generated — single span or all R1 bars reached the last span.")
-
-st.session_state["r2_series"] = r2_all
+    st.markdown("")
 
 # ── Confirm ─────────────────────────────────────────────────────────────────────
 st.markdown("---")
