@@ -155,7 +155,8 @@ def print_table(rows):
     h3.markdown("**Com. Length (mm)**"); h4.markdown("**Waste (mm)**"); h5.markdown("**Cumul. Waste (mm)**")
     for r in rows:
         c1,c2,c3,c4,c5 = st.columns([1.5,2,2,2,2])
-        c1.write(r["label"]); c2.write(f"{r['rl']:,.0f}")
+        lbl = f"{r['label']}*" if r["is_terminal"] else r["label"]
+        c1.write(lbl); c2.write(f"{r['rl']:,.0f}")
         if r["cl"] is None:
             c3.write("**EXCEEDED**"); c4.write("—"); c5.write("—")
         else:
@@ -182,12 +183,14 @@ def print_table(rows):
 # If exceeded → print it as EXCEEDED and stop that branch (no continuation).
 # Continuation only happens from bars that fit within max_com.
 
-def make_bar(label, rl, pcw, span_idx, is_terminal, suffix):
+def make_bar(label, rl, pcw, span_idx, is_terminal, suffix, parent_chain_rls=None):
     cl, w = get_waste(rl)
     cum_w = (pcw + w) if (pcw is not None and w is not None) else None
+    chain_rls = (parent_chain_rls or []) + [rl]
     return {"label": label, "rl": rl, "cl": cl, "waste": w,
             "cum_waste": cum_w, "span_idx": span_idx,
-            "is_terminal": is_terminal, "parent_cum_waste": pcw, "suffix": suffix}
+            "is_terminal": is_terminal, "parent_cum_waste": pcw,
+            "suffix": suffix, "chain_rls": chain_rls}
 
 def children_of(parent, series_num):
     """
@@ -201,6 +204,7 @@ def children_of(parent, series_num):
     pcw    = parent["cum_waste"]
     psuffix = parent["suffix"]
     sn     = str(series_num)
+    pchain = parent["chain_rls"]
     result = []
     sub    = 0   # sub-label index (A, B, C...)
 
@@ -214,7 +218,7 @@ def children_of(parent, series_num):
         d += top_zones[q]["left"] + LapT
 
         lbl = f"R{sn}{psuffix}{ALPHA[sub]}"
-        bar = make_bar(lbl, d, pcw, q, False, psuffix + ALPHA[sub])
+        bar = make_bar(lbl, d, pcw, q, False, psuffix + ALPHA[sub], pchain)
         result.append(bar)
         sub += 1
 
@@ -232,7 +236,7 @@ def children_of(parent, series_num):
     d += clear_spans[last] + Emb + Hk
 
     lbl = f"R{sn}{psuffix}{ALPHA[sub]}"
-    bar = make_bar(lbl, d, pcw, last, True, psuffix + ALPHA[sub])
+    bar = make_bar(lbl, d, pcw, last, True, psuffix + ALPHA[sub], pchain)
     result.append(bar)
 
     return result
@@ -252,10 +256,11 @@ def children_of_last_mid(parent, series_num):
     pcw     = parent["cum_waste"]
     psuffix = parent["suffix"]
     sn      = str(series_num)
+    pchain  = parent["chain_rls"]
 
     d = clear_spans[last] - top_zones[last]["left"] + Emb + Hk
     lbl = f"R{sn}{psuffix}A"
-    bar = make_bar(lbl, d, pcw, last, True, psuffix + "A")
+    bar = make_bar(lbl, d, pcw, last, True, psuffix + "A", pchain)
     return [bar]
 
 
