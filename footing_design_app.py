@@ -275,7 +275,7 @@ for j in range(no_spans):
     d_mid = Hk + d + top_zones[j]["left"] + LapT
 
     lbl = f"R1{ALPHA[sub]}"
-    bar = make_bar(lbl, d_mid, 0, j, False, ALPHA[sub])
+    bar = make_bar(lbl, d_mid, 0, j, False, ALPHA[sub], None)
     r1_nodes.append(bar)
     sub += 1
 
@@ -290,7 +290,7 @@ if last_mid and last_mid["cl"] is not None and last_mid["span_idx"] == last:
     for k in range(last): d += clear_spans[k] + col_widths[k + 1]
     d_term = Hk + d + clear_spans[last] + Emb + Hk
     lbl = f"R1{ALPHA[sub]}"
-    bar = make_bar(lbl, d_term, 0, last, True, ALPHA[sub])
+    bar = make_bar(lbl, d_term, 0, last, True, ALPHA[sub], last_mid["chain_rls"])
     r1_nodes.append(bar)
 
 all_series = [r1_nodes]
@@ -352,3 +352,36 @@ for s_idx, series_bars in enumerate(all_series):
 st.markdown("---")
 if st.button("Confirm →"):
     st.success("Confirmed! Ready for the next step.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SUMMARY — All terminal chains ranked by cumulative waste
+# ══════════════════════════════════════════════════════════════════════════════
+st.markdown("---")
+st.subheader("Summary — Complete Chains (Ranked by Cumulative Waste)")
+st.markdown("_\\* = terminal bar (ends at right hook). Running lengths shown in metres._")
+
+# Collect all terminal bars that fit within max_com
+terminals = []
+for series_bars in all_series:
+    for bar in series_bars:
+        if bar["is_terminal"] and bar["cl"] is not None:
+            terminals.append(bar)
+
+# Sort by cumulative waste ascending
+terminals.sort(key=lambda b: b["cum_waste"])
+
+if not terminals:
+    st.info("No complete chains found within the selected commercial lengths.")
+else:
+    h1, h2, h3 = st.columns([2, 4, 2])
+    h1.markdown("**Terminal Label**")
+    h2.markdown("**Component Lengths (m)**")
+    h3.markdown("**Cumul. Waste (mm)**")
+
+    for bar in terminals:
+        c1, c2, c3 = st.columns([2, 4, 2])
+        c1.write(f"{bar['label']}*")
+        # Format chain as "x.xx - x.xx - x.xx"
+        chain_str = " — ".join(f"{rl/1000:.3f}" for rl in bar["chain_rls"])
+        c2.write(chain_str)
+        c3.write(f"{bar['cum_waste']:,.0f}")
