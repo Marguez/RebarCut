@@ -14,17 +14,53 @@ st.title("🏗️ Beam Rebar Optimizer")
 # ══════════════════════════════════════════════════════════════════════════════
 st.subheader("Rebar Parameters")
 
-# --- Primary inputs ---
-Db  = st.number_input("Db — Rebar diameter (mm)",          min_value=6,   max_value=50,   value=25,  step=1)
-Anc = st.number_input("Anc — Anchorage length (mm)",       min_value=100, max_value=2000, value=680, step=10)
+# --- Db and Anc first (Hk/Emb defaults depend on these) ---
+c1, c2 = st.columns(2)
+with c1:
+    Db  = st.number_input("Db — Rebar diameter (mm)",    min_value=6,   max_value=50,   value=25,  step=1)
+with c2:
+    Anc = st.number_input("Anc — Anchorage length (mm)", min_value=100, max_value=2000, value=680, step=10)
 
-# --- Derived (shown as read-only info) ---
-Hk  = 12 * Db
-Emb = Anc - Hk
+# --- Hk and Emb: editable, defaults computed from Db/Anc ---
+# Use session state to detect when Db/Anc change so we can reset defaults
+prev_Db  = st.session_state.get("prev_Db",  Db)
+prev_Anc = st.session_state.get("prev_Anc", Anc)
+params_changed = (Db != prev_Db) or (Anc != prev_Anc)
 
-col_a, col_b = st.columns(2)
-col_a.info(f"**Hk** = 12 × Db = 12 × {Db} = **{Hk} mm**")
-col_b.info(f"**Emb** = Anc − Hk = {Anc} − {Hk} = **{Emb} mm**")
+default_Hk  = 12 * Db
+default_Emb = Anc - default_Hk
+
+# Reset stored overrides if Db or Anc changed
+if params_changed:
+    st.session_state["Hk_val"]  = default_Hk
+    st.session_state["Emb_val"] = default_Emb
+    st.session_state["prev_Db"]  = Db
+    st.session_state["prev_Anc"] = Anc
+
+# Initialise if first run
+if "Hk_val" not in st.session_state:
+    st.session_state["Hk_val"] = default_Hk
+if "Emb_val" not in st.session_state:
+    st.session_state["Emb_val"] = default_Emb
+
+c3, c4 = st.columns(2)
+with c3:
+    Hk = st.number_input(
+        f"Hk — Hook length (mm)  *(default: 12 × Db = {default_Hk})*",
+        min_value=0, max_value=2000,
+        value=st.session_state["Hk_val"], step=10,
+        key="Hk_input",
+    )
+    st.session_state["Hk_val"] = Hk
+
+with c4:
+    Emb = st.number_input(
+        f"Emb — Embedment length (mm)  *(default: Anc − Hk = {default_Emb})*",
+        min_value=0, max_value=2000,
+        value=st.session_state["Emb_val"], step=10,
+        key="Emb_input",
+    )
+    st.session_state["Emb_val"] = Emb
 
 st.markdown("")
 
@@ -40,7 +76,6 @@ st.markdown("")
 
 # --- Splice zones ---
 st.markdown("**Splice Zones** *(as fraction of clear span)*")
-
 c1, c2 = st.columns(2)
 with c1:
     st.markdown("*Top bars*")
@@ -52,16 +87,11 @@ with c2:
     SplBIn = st.number_input("SplBIn — Bottom, Interior span", min_value=0.0, max_value=1.0, value=0.20, step=0.01, format="%.2f")
 
 # Persist rebar params
-st.session_state["Db"]     = Db
-st.session_state["Anc"]    = Anc
-st.session_state["Hk"]     = Hk
-st.session_state["Emb"]    = Emb
-st.session_state["LapT"]   = LapT
-st.session_state["LapB"]   = LapB
-st.session_state["SplTEx"] = SplTEx
-st.session_state["SplTIn"] = SplTIn
-st.session_state["SplBEx"] = SplBEx
-st.session_state["SplBIn"] = SplBIn
+for k, v in {"Db": Db, "Anc": Anc, "Hk": Hk, "Emb": Emb,
+             "LapT": LapT, "LapB": LapB,
+             "SplTEx": SplTEx, "SplTIn": SplTIn,
+             "SplBEx": SplBEx, "SplBIn": SplBIn}.items():
+    st.session_state[k] = v
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 2 — STRUCTURE GEOMETRY
@@ -83,37 +113,28 @@ if "span_lengths" not in st.session_state or len(st.session_state["span_lengths"
 col_widths   = list(st.session_state["col_widths"])
 span_lengths = list(st.session_state["span_lengths"])
 
-# Header
 h1, h2, h3 = st.columns([1, 2, 1])
 h1.markdown("**Column**")
 h2.markdown("**Span Length (mm)**")
 h3.markdown("**Column**")
 
-# One row per span
 for i in range(no_spans):
     c1, c2, c3 = st.columns([1, 2, 1])
-
     with c1:
         col_widths[i] = st.number_input(
-            f"C{i + 1} (mm)",
-            min_value=100, max_value=3000,
-            value=col_widths[i], step=50,
-            key=f"cw_{i}",
+            f"C{i + 1} (mm)", min_value=100, max_value=3000,
+            value=col_widths[i], step=50, key=f"cw_{i}",
         )
     with c2:
         span_lengths[i] = st.number_input(
-            f"L{i + 1} (mm)",
-            min_value=500, max_value=50000,
-            value=span_lengths[i], step=100,
-            key=f"sl_{i}",
+            f"L{i + 1} (mm)", min_value=500, max_value=50000,
+            value=span_lengths[i], step=100, key=f"sl_{i}",
         )
     if i == no_spans - 1:
         with c3:
             col_widths[n_cols - 1] = st.number_input(
-                f"C{n_cols} (mm)",
-                min_value=100, max_value=3000,
-                value=col_widths[n_cols - 1], step=50,
-                key=f"cw_{n_cols - 1}",
+                f"C{n_cols} (mm)", min_value=100, max_value=3000,
+                value=col_widths[n_cols - 1], step=50, key=f"cw_{n_cols - 1}",
             )
 
 st.session_state["col_widths"]   = col_widths
@@ -148,8 +169,8 @@ st.markdown("---")
 total = sum(col_widths) + sum(span_lengths)
 st.metric("Total Beam Length", f"{total:,} mm  ({total / 1000:.3f} m)")
 
-st.session_state["clear_spans"]     = clear_spans
-st.session_state["no_spans"]        = no_spans
+st.session_state["clear_spans"]       = clear_spans
+st.session_state["no_spans"]          = no_spans
 st.session_state["total_beam_length"] = total
 
 # ── Confirm ─────────────────────────────────────────────────────────────────────
