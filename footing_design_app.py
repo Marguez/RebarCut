@@ -4,7 +4,6 @@ Step 1: Rebar Parameters + Structure Geometry + Splice Zones + Running Lengths R
 """
 
 import streamlit as st
-import math
 
 st.set_page_config(page_title="Beam Rebar Optimizer", page_icon="🏗️")
 
@@ -15,11 +14,10 @@ st.title("🏗️ Beam Rebar Optimizer")
 # ══════════════════════════════════════════════════════════════════════════════
 st.subheader("Commercial Lengths")
 
-com_length_defaults = [6.0, 7.5, 9.0, 10.5, 12.0]
 com_lengths_m = st.multiselect(
     "Commercial lengths (m)",
     options=[6.0, 7.5, 9.0, 10.5, 12.0, 13.5, 15.0],
-    default=com_length_defaults,
+    default=[6.0, 7.5, 9.0, 10.5, 12.0],
 )
 com_lengths_m = sorted(com_lengths_m)
 com_lengths   = [l * 1000 for l in com_lengths_m]
@@ -230,7 +228,6 @@ def waste_row(length, com_lengths):
     return cl, w
 
 def print_rl_table(rows):
-    """Print a running-length result table. rows = list of dicts."""
     h1, h2, h3, h4 = st.columns([1, 2, 2, 2])
     h1.markdown("**Label**")
     h2.markdown("**Running Length (mm)**")
@@ -253,23 +250,22 @@ st.markdown("---")
 st.subheader("R1 Series — Top Bars")
 st.markdown("Bars starting at the **left hook of Span 1**, terminating at successive left splice zones.")
 
-# R1j terminates at the LEFT splice zone of span j (0-based index j)
-# Length = Hk + Emb + [S0 + C1+1 + S1 + C2+1 + ... through spans 0..j-1] + top_zones[j]["left"] + LapT
-
 r1_series = []
 for j in range(no_spans):
+    # Distance from hook bend to termination:
+    # Emb (into C1) + spans/cols traversed + left_zone[j] + LapT
     dist = Emb
     for k in range(j):
         dist += clear_spans[k] + col_widths[k + 1]
+    rl = Hk + dist + top_zones[j]["left"] + LapT
 
-    rl  = Hk + dist + top_zones[j]["left"] + LapT
     cl, w = waste_row(rl, com_lengths)
     r1_series.append({
         "label":          f"R1{ALPHA[j]}",
         "running_length": rl,
         "com_length":     cl,
         "waste":          w,
-        "span_idx":       j,       # terminates at left zone of span j
+        "span_idx":       j,
     })
     if cl is None:
         break
@@ -287,53 +283,59 @@ st.session_state["r1_series"] = r1_series
 st.markdown("---")
 st.subheader("R2 Series — Top Bars")
 st.markdown(
-    "Each R2 bar splices with an R1 bar. It starts just past where R1 terminated "
-    "(inside the right splice zone of that span) and terminates at the left splice "
-    "zone of a subsequent span."
+    "Each R2 bar **starts at the beginning of the splice zone** where R1 terminated "
+    "and overlaps R1 by LapT. It then travels rightward to terminate at the beginning "
+    "of the left splice zone of a further span."
 )
 
-# ── Logic ──────────────────────────────────────────────────────────────────────
-# R1x terminates at the LEFT splice zone of span p (p = r1["span_idx"]).
-# The R2 bar overlaps R1x by LapT within that same left splice zone.
-# Then it travels rightward, passing through the RIGHT splice zone of span p,
-# then through successive columns and spans, terminating at the LEFT splice zone
-# of span q (q > p).
+# ── R2 formula (corrected) ─────────────────────────────────────────────────────
 #
-# R2 length from its own start to termination:
-#   = top_zones[p]["right"]          ← right zone of span p (must clear it)
-#   + col_widths[p+1]                ← column between span p and span p+1
-#   + [for each interior span p+1..q-1: clear_spans[k] + col_widths[k+1]]
-#   + top_zones[q]["left"] + LapT    ← left zone of span q + min lap
+# R1x terminated at span p (0-based). The lap starts at the BEGINNING of the
+# left splice zone of span p, so:
 #
-# The bar ends when q reaches the last span OR length > max_com.
+#   R2 start ← beginning of left_zone[p]
+#   R2 end   ← beginning of left_zone[q] + LapT   (q > p)
+#
+# The R2 bar length is therefore the distance from the start of left_zone[p]
+# to the end of the lap at left_zone[q]:
+#
+#   dist = (S[p] - left_zone[p])      ← remainder of span p after splice start
+#        + col_widths[p+1]             ← column immediately right of span p
+#        + [for k in p+1..q-1: S[k] + col_widths[k+1]]   ← interior spans/cols
+#        + left_zone[q] + LapT         ← into span q up to end of lap
+#
+# For q = p+1 (adjacent span, first R2 option):
+#   dist = (S[p] - left_zone[p]) + col_widths[p+1] + left_zone[p+1] + LapT
 
-r2_all = []  # flat list of all R2 rows across all R1 parents
+r2_all = []
 
 for r1 in r1_series:
     if r1["com_length"] is None:
-        continue  # R1 itself exceeded max — skip
-
-    p          = r1["span_idx"]   # span where R1 terminated (0-based)
-    r1_suffix  = r1["label"][-1]  # e.g. "A", "B", …
-
-    # R2 can only continue if there is at least one span to the right of p
-    if p >= no_spans - 1:
         continue
+
+    p         = r1["span_idx"]
+    r1_suffix = r1["label"][-1]   # "A", "B", …
+
+    if p >= no_spans - 1:
+        continue   # no span to the right
 
     r2_parent = []
 
     for q in range(p + 1, no_spans):
-        sub_label = ALPHA[q - p - 1]   # A, B, C… for first, second, third reach
+        sub_label = ALPHA[q - p - 1]   # A for first reach, B for second, …
 
-        # Distance from the start of the R2 bar to its termination point
-        dist = top_zones[p]["right"]        # right splice zone of span p
-        dist += col_widths[p + 1]           # column immediately to the right
+        # Remainder of span p from start of its left splice zone to its right end
+        dist = clear_spans[p] - top_zones[p]["left"]
+
+        # Column immediately to the right of span p
+        dist += col_widths[p + 1]
 
         # Travel through interior spans p+1 .. q-1
         for k in range(p + 1, q):
             dist += clear_spans[k] + col_widths[k + 1]
 
-        dist += top_zones[q]["left"] + LapT  # left splice zone of span q + lap
+        # Into span q: left splice zone + lap
+        dist += top_zones[q]["left"] + LapT
 
         cl, w = waste_row(dist, com_lengths)
         r2_parent.append({
@@ -347,18 +349,17 @@ for r1 in r1_series:
         })
 
         if cl is None:
-            break   # exceeded max com length — no point going further
+            break
 
     r2_all.extend(r2_parent)
 
-    # Print per-parent group
     if r2_parent:
-        st.markdown(f"**Splicing with {r1['label']}** *(terminates at left zone of Span {p+1})*")
+        st.markdown(f"**Splicing with {r1['label']}** *(R1 terminated at left zone of Span {p+1})*")
         print_rl_table(r2_parent)
         st.markdown("")
 
 if not r2_all:
-    st.info("No R2 bars generated — either only one span or all R1 bars reached the last span.")
+    st.info("No R2 bars generated — single span or all R1 bars reached the last span.")
 
 st.session_state["r2_series"] = r2_all
 
