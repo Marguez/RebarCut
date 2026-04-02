@@ -161,128 +161,51 @@ st.session_state["total_beam_length"] = total
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("---")
 st.subheader("Splice Zones")
-st.markdown("Maximum splice zone length from each support face (mm).")
-
-# ── TOP BARS ──────────────────────────────────────────────────────────────────
-# Each span has a LEFT zone and a RIGHT zone.
-#
-# Span 1 (exterior):
-#   Left  = SplTEx * S1
-#   Right = SplTIn * max(S1, S2)          [if only 1 span: SplTEx * S1]
-#
-# Span i (interior, 1 < i < n):
-#   Left  = SplTIn * max(S(i-1), Si)
-#   Right = SplTIn * max(Si, S(i+1))
-#
-# Span n (exterior):
-#   Left  = SplTIn * max(S(n-1), Sn)      [if only 1 span: SplTEx * Sn]
-#   Right = SplTEx * Sn
 
 def top_splice_zone(i, clear_spans, SplTEx, SplTIn, no_spans):
-    """Return (left_zone, right_zone) for top bars at span index i (0-based)."""
     S = clear_spans
-    n = no_spans
-
-    # LEFT side
-    if i == 0:
-        left = SplTEx * S[0]
-    else:
-        left = SplTIn * max(S[i-1], S[i])
-
-    # RIGHT side
-    if i == n - 1:
-        right = SplTEx * S[n-1]
-    else:
-        right = SplTIn * max(S[i], S[i+1])
-
+    left  = SplTEx * S[0]       if i == 0          else SplTIn * max(S[i-1], S[i])
+    right = SplTEx * S[no_spans-1] if i == no_spans-1 else SplTIn * max(S[i],   S[i+1])
     return left, right
 
 def bot_splice_zone(i, clear_spans, SplBEx, SplBIn, no_spans):
-    """Return (left_zone, right_zone) for bottom bars at span index i (0-based)."""
     S = clear_spans
-    n = no_spans
-
-    if i == 0:
-        left = SplBEx * S[0]
-    else:
-        left = SplBIn * max(S[i-1], S[i])
-
-    if i == n - 1:
-        right = SplBEx * S[n-1]
-    else:
-        right = SplBIn * max(S[i], S[i+1])
-
+    left  = SplBEx * S[0]       if i == 0          else SplBIn * max(S[i-1], S[i])
+    right = SplBEx * S[no_spans-1] if i == no_spans-1 else SplBIn * max(S[i],   S[i+1])
     return left, right
 
-# ── Print Top Bars ────────────────────────────────────────────────────────────
+# Top bars
 st.markdown("**Top Bars**")
-
-top_zones = []
-h1, h2, h3, h4, h5 = st.columns([1, 2, 3, 2, 3])
+h1, h2, h3 = st.columns([1, 2, 2])
 h1.markdown("**Span**")
 h2.markdown("**Left zone (mm)**")
-h3.markdown("**Formula**")
-h4.markdown("**Right zone (mm)**")
-h5.markdown("**Formula**")
+h3.markdown("**Right zone (mm)**")
 
+top_zones = []
 for i in range(no_spans):
     lz, rz = top_splice_zone(i, clear_spans, SplTEx, SplTIn, no_spans)
     top_zones.append({"left": lz, "right": rz})
-
-    # Build formula strings for display
-    if i == 0:
-        lf_str = f"SplTEx × S{i+1} = {SplTEx} × {clear_spans[i]:,.0f}"
-    else:
-        adj = max(clear_spans[i-1], clear_spans[i])
-        lf_str = f"SplTIn × max(S{i},S{i+1}) = {SplTIn} × {adj:,.0f}"
-
-    if i == no_spans - 1:
-        rf_str = f"SplTEx × S{i+1} = {SplTEx} × {clear_spans[i]:,.0f}"
-    else:
-        adj = max(clear_spans[i], clear_spans[i+1])
-        rf_str = f"SplTIn × max(S{i+1},S{i+2}) = {SplTIn} × {adj:,.0f}"
-
-    r1, r2, r3, r4, r5 = st.columns([1, 2, 3, 2, 3])
+    r1, r2, r3 = st.columns([1, 2, 2])
     r1.write(f"S{i+1}")
-    r2.write(f"**{lz:,.0f}**")
-    r3.write(lf_str)
-    r4.write(f"**{rz:,.0f}**")
-    r5.write(rf_str)
+    r2.write(f"{lz:,.0f}")
+    r3.write(f"{rz:,.0f}")
 
-# ── Print Bottom Bars ─────────────────────────────────────────────────────────
+# Bottom bars
 st.markdown("")
 st.markdown("**Bottom Bars**")
-
-bot_zones = []
-h1, h2, h3, h4, h5 = st.columns([1, 2, 3, 2, 3])
+h1, h2, h3 = st.columns([1, 2, 2])
 h1.markdown("**Span**")
 h2.markdown("**Left zone (mm)**")
-h3.markdown("**Formula**")
-h4.markdown("**Right zone (mm)**")
-h5.markdown("**Formula**")
+h3.markdown("**Right zone (mm)**")
 
+bot_zones = []
 for i in range(no_spans):
     lz, rz = bot_splice_zone(i, clear_spans, SplBEx, SplBIn, no_spans)
     bot_zones.append({"left": lz, "right": rz})
-
-    if i == 0:
-        lf_str = f"SplBEx × S{i+1} = {SplBEx} × {clear_spans[i]:,.0f}"
-    else:
-        adj = max(clear_spans[i-1], clear_spans[i])
-        lf_str = f"SplBIn × max(S{i},S{i+1}) = {SplBIn} × {adj:,.0f}"
-
-    if i == no_spans - 1:
-        rf_str = f"SplBEx × S{i+1} = {SplBEx} × {clear_spans[i]:,.0f}"
-    else:
-        adj = max(clear_spans[i], clear_spans[i+1])
-        rf_str = f"SplBIn × max(S{i+1},S{i+2}) = {SplBIn} × {adj:,.0f}"
-
-    r1, r2, r3, r4, r5 = st.columns([1, 2, 3, 2, 3])
+    r1, r2, r3 = st.columns([1, 2, 2])
     r1.write(f"S{i+1}")
-    r2.write(f"**{lz:,.0f}**")
-    r3.write(lf_str)
-    r4.write(f"**{rz:,.0f}**")
-    r5.write(rf_str)
+    r2.write(f"{lz:,.0f}")
+    r3.write(f"{rz:,.0f}")
 
 st.session_state["top_zones"] = top_zones
 st.session_state["bot_zones"] = bot_zones
