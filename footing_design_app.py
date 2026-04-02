@@ -34,12 +34,6 @@ h2.markdown("**Span Length (mm)**")
 h3.markdown("**Column**")
 
 # ── One row per span ─────────────────────────────────────────────────────────────
-# Key strategy:
-#   Left column  of span i  → key "cw_{i}"          (unique, 0-based)
-#   Span length  of span i  → key "sl_{i}"           (unique, 0-based)
-#   Right column is NOT rendered here; it is the left column of the next row.
-#   The very last right column (C_{n_cols}) is rendered after the loop.
-
 for i in range(no_spans):
     c1, c2, c3 = st.columns([1, 2, 1])
 
@@ -59,8 +53,6 @@ for i in range(no_spans):
             key=f"sl_{i}",
         )
 
-    # c3 is intentionally left blank — the next row's left column IS this right column.
-    # We only fill c3 on the last row to show the final column.
     if i == no_spans - 1:
         with c3:
             col_widths[n_cols - 1] = st.number_input(
@@ -74,10 +66,38 @@ for i in range(no_spans):
 st.session_state["col_widths"]   = col_widths
 st.session_state["span_lengths"] = span_lengths
 
-# ── Total ───────────────────────────────────────────────────────────────────────
+# ── Clear span computation ──────────────────────────────────────────────────────
+st.markdown("---")
+st.subheader("Clear Span Lengths")
+st.markdown("Formula: **Sᵢ = Lᵢ − 0.5 × Cᵢ − 0.5 × C(i+1)**")
+st.markdown("")
+
+clear_spans = []
+for i in range(no_spans):
+    s = span_lengths[i] - 0.5 * col_widths[i] - 0.5 * col_widths[i + 1]
+    clear_spans.append(s)
+
+# Print as a simple table
+header_cols = st.columns([1, 2, 2, 2])
+header_cols[0].markdown("**Span**")
+header_cols[1].markdown("**L (mm)**")
+header_cols[2].markdown("**− 0.5C − 0.5C (mm)**")
+header_cols[3].markdown("**Clear Span S (mm)**")
+
+for i in range(no_spans):
+    deduction = 0.5 * col_widths[i] + 0.5 * col_widths[i + 1]
+    row = st.columns([1, 2, 2, 2])
+    row[0].write(f"S{i + 1}")
+    row[1].write(f"{span_lengths[i]:,}")
+    row[2].write(f"− {deduction:,.0f}")
+    row[3].write(f"**{clear_spans[i]:,.0f}**")
+
 st.markdown("---")
 total = sum(col_widths) + sum(span_lengths)
 st.metric("Total Beam Length", f"{total:,} mm  ({total / 1000:.3f} m)")
+
+# Persist clear spans
+st.session_state["clear_spans"] = clear_spans
 
 # ── Confirm ──────────────────────────────────────────────────────────────────────
 if st.button("Confirm Geometry →"):
