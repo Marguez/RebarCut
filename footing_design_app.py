@@ -1,17 +1,38 @@
 """
 BEAM REBAR CUTTING OPTIMIZER
-Step 1: Rebar Parameters + Structure Geometry Input
+Step 1: Rebar Parameters + Structure Geometry + Splice Zones + Running Lengths
 """
 
 import streamlit as st
+import math
 
 st.set_page_config(page_title="Beam Rebar Optimizer", page_icon="🏗️")
 
 st.title("🏗️ Beam Rebar Optimizer")
 
 # ══════════════════════════════════════════════════════════════════════════════
+# SECTION 0 — COMMERCIAL LENGTHS
+# ══════════════════════════════════════════════════════════════════════════════
+st.subheader("Commercial Lengths")
+st.markdown("Available rebar stock lengths (m):")
+
+com_length_defaults = [6.0, 7.5, 9.0, 10.5, 12.0]
+com_lengths_m = st.multiselect(
+    "Commercial lengths (m)",
+    options=[6.0, 7.5, 9.0, 10.5, 12.0, 13.5, 15.0],
+    default=com_length_defaults,
+)
+com_lengths_m = sorted(com_lengths_m)
+com_lengths   = [l * 1000 for l in com_lengths_m]   # convert to mm
+max_com       = max(com_lengths) if com_lengths else 12000
+
+st.write("Selected (mm):", [f"{l:,.0f}" for l in com_lengths])
+st.session_state["com_lengths"] = com_lengths
+
+# ══════════════════════════════════════════════════════════════════════════════
 # SECTION 1 — REBAR PARAMETERS
 # ══════════════════════════════════════════════════════════════════════════════
+st.markdown("---")
 st.subheader("Rebar Parameters")
 
 c1, c2 = st.columns(2)
@@ -148,8 +169,8 @@ for i in range(no_spans):
     r3.write(f"− {deduction:,.0f}")
     r4.write(f"**{clear_spans[i]:,.0f}**")
 
-st.markdown("---")
 total = sum(col_widths) + sum(span_lengths)
+st.markdown("---")
 st.metric("Total Beam Length", f"{total:,} mm  ({total/1000:.3f} m)")
 
 st.session_state["clear_spans"]       = clear_spans
@@ -164,51 +185,141 @@ st.subheader("Splice Zones")
 
 def top_splice_zone(i, clear_spans, SplTEx, SplTIn, no_spans):
     S = clear_spans
-    left  = SplTEx * S[0]       if i == 0          else SplTIn * max(S[i-1], S[i])
+    left  = SplTEx * S[0]          if i == 0          else SplTIn * max(S[i-1], S[i])
     right = SplTEx * S[no_spans-1] if i == no_spans-1 else SplTIn * max(S[i],   S[i+1])
     return left, right
 
 def bot_splice_zone(i, clear_spans, SplBEx, SplBIn, no_spans):
     S = clear_spans
-    left  = SplBEx * S[0]       if i == 0          else SplBIn * max(S[i-1], S[i])
+    left  = SplBEx * S[0]          if i == 0          else SplBIn * max(S[i-1], S[i])
     right = SplBEx * S[no_spans-1] if i == no_spans-1 else SplBIn * max(S[i],   S[i+1])
     return left, right
 
-# Top bars
 st.markdown("**Top Bars**")
 h1, h2, h3 = st.columns([1, 2, 2])
-h1.markdown("**Span**")
-h2.markdown("**Left zone (mm)**")
-h3.markdown("**Right zone (mm)**")
+h1.markdown("**Span**"); h2.markdown("**Left zone (mm)**"); h3.markdown("**Right zone (mm)**")
 
 top_zones = []
 for i in range(no_spans):
     lz, rz = top_splice_zone(i, clear_spans, SplTEx, SplTIn, no_spans)
     top_zones.append({"left": lz, "right": rz})
     r1, r2, r3 = st.columns([1, 2, 2])
-    r1.write(f"S{i+1}")
-    r2.write(f"{lz:,.0f}")
-    r3.write(f"{rz:,.0f}")
+    r1.write(f"S{i+1}"); r2.write(f"{lz:,.0f}"); r3.write(f"{rz:,.0f}")
 
-# Bottom bars
 st.markdown("")
 st.markdown("**Bottom Bars**")
 h1, h2, h3 = st.columns([1, 2, 2])
-h1.markdown("**Span**")
-h2.markdown("**Left zone (mm)**")
-h3.markdown("**Right zone (mm)**")
+h1.markdown("**Span**"); h2.markdown("**Left zone (mm)**"); h3.markdown("**Right zone (mm)**")
 
 bot_zones = []
 for i in range(no_spans):
     lz, rz = bot_splice_zone(i, clear_spans, SplBEx, SplBIn, no_spans)
     bot_zones.append({"left": lz, "right": rz})
     r1, r2, r3 = st.columns([1, 2, 2])
-    r1.write(f"S{i+1}")
-    r2.write(f"{lz:,.0f}")
-    r3.write(f"{rz:,.0f}")
+    r1.write(f"S{i+1}"); r2.write(f"{lz:,.0f}"); r3.write(f"{rz:,.0f}")
 
 st.session_state["top_zones"] = top_zones
 st.session_state["bot_zones"] = bot_zones
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 5 — RUNNING LENGTHS (R1 SERIES — TOP BARS)
+# ══════════════════════════════════════════════════════════════════════════════
+st.markdown("---")
+st.subheader("Running Lengths — R1 Series (Top Bars)")
+st.markdown(
+    "Each R1 bar starts at the **left hook of Span 1** and terminates at successive "
+    "splice points moving right. The series stops when the running length exceeds the "
+    "maximum commercial length."
+)
+
+def ceiling_com(length, com_lengths):
+    """Return the smallest commercial length >= length. None if none fits."""
+    for cl in sorted(com_lengths):
+        if cl >= length:
+            return cl
+    return None
+
+def waste(length, com_lengths):
+    cl = ceiling_com(length, com_lengths)
+    if cl is None:
+        return None, None
+    return cl, cl - length
+
+# ── Build R1 series ────────────────────────────────────────────────────────────
+# A bar in the R1 series always starts at the left hook of Span 1.
+# Base = Hk + Emb  (hook + embedment into C1, up to the left face of Span 1)
+#
+# Termination points (splice points) moving rightward:
+#
+#   Label   Terminates at...
+#   R1A     End of top splice zone LEFT of Span 1  (exterior)
+#           = Hk + Emb + top_zones[0]["left"] + LapT
+#
+#   R1B     End of top splice zone LEFT of Span 2  (interior)
+#           = Hk + Emb + S1 + C2 + top_zones[1]["left"] + LapT
+#           (bar passes through column C2, hence + col_widths[1])
+#
+#   R1C     End of top splice zone LEFT of Span 3
+#           = Hk + Emb + S1 + C2 + S2 + C3 + top_zones[2]["left"] + LapT
+#
+#   … and so on until length > max_com
+#
+# Note: the RIGHT splice zones are NOT termination points for R1-series bars
+# because a bar starting from the left hook terminates within a splice zone,
+# which is measured from the support face inward.
+
+r1_series = []
+labels = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+for j in range(no_spans):
+    label = f"R1{labels[j]}"
+
+    # Accumulate the distance from the left hook to the left face of span j
+    # = Emb (into C1) + S1 + C2 + S2 + C3 + ... + Sj-1 + Cj+1
+    # i.e. we travel through spans 0..(j-1) and intermediate columns 1..j
+    dist_to_splice_zone_start = Emb
+    for k in range(j):
+        dist_to_splice_zone_start += clear_spans[k]      # Sk
+        dist_to_splice_zone_start += col_widths[k + 1]   # C(k+2) — intermediate column
+
+    running_length = Hk + dist_to_splice_zone_start + top_zones[j]["left"] + LapT
+
+    com, w = waste(running_length, com_lengths)
+
+    r1_series.append({
+        "label":          label,
+        "running_length": running_length,
+        "com_length":     com,
+        "waste":          w,
+        "exceeds_max":    com is None,
+    })
+
+    # Stop if this length already exceeded max commercial length
+    if com is None:
+        break
+
+# ── Print R1 table ─────────────────────────────────────────────────────────────
+if not com_lengths:
+    st.warning("Please select at least one commercial length above.")
+else:
+    h1, h2, h3, h4 = st.columns([1, 2, 2, 2])
+    h1.markdown("**Label**")
+    h2.markdown("**Running Length (mm)**")
+    h3.markdown("**Com. Length used (mm)**")
+    h4.markdown("**Waste (mm)**")
+
+    for row in r1_series:
+        c1, c2, c3, c4 = st.columns([1, 2, 2, 2])
+        c1.write(row["label"])
+        c2.write(f"{row['running_length']:,.0f}")
+        if row["exceeds_max"]:
+            c3.write("— exceeds max —")
+            c4.write("—")
+        else:
+            c3.write(f"{row['com_length']:,.0f}")
+            c4.write(f"{row['waste']:,.0f}")
+
+st.session_state["r1_series"] = r1_series
 
 # ── Confirm ─────────────────────────────────────────────────────────────────────
 st.markdown("---")
