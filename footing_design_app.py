@@ -229,7 +229,7 @@ def children_of(parent, series_num):
     d += col_widths[p + 1]
     for k in range(p + 1, last):
         d += clear_spans[k] + col_widths[k + 1]
-    d += clear_spans[last] + Emb + Hk
+    d += col_widths[last] + clear_spans[last] + Emb + Hk
 
     lbl = f"R{sn}{psuffix}{ALPHA[sub]}"
     bar = make_bar(lbl, d, pcw, last, True, psuffix + ALPHA[sub])
@@ -283,7 +283,7 @@ last_mid = next((b for b in reversed(r1_nodes) if not b["is_terminal"]), None)
 if last_mid and last_mid["cl"] is not None and last_mid["span_idx"] == last:
     d = Emb
     for k in range(last): d += clear_spans[k] + col_widths[k + 1]
-    d_term = Hk + d + clear_spans[last] + Emb + Hk
+    d_term = Hk + d + col_widths[last] + clear_spans[last] + Emb + Hk
     lbl = f"R1{ALPHA[sub]}"
     bar = make_bar(lbl, d_term, 0, last, True, ALPHA[sub])
     r1_nodes.append(bar)
