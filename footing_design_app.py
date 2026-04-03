@@ -92,35 +92,6 @@ st.session_state["col_widths"]   = col_widths
 st.session_state["span_lengths"] = span_lengths
 
 # ══════════════════════════════════════════════════════════════════════════════
-# BUILD ALL SERIES (must happen before display so top-5 can be shown early)
-# ══════════════════════════════════════════════════════════════════════════════
-top_series = build_top_series()
-bot_series = build_bot_series()
-
-def collect_terminals(all_series):
-    t = [b for s in all_series for b in s if b["is_terminal"] and b["cl"] is not None]
-    t.sort(key=lambda b: b["cum_waste"])
-    return t
-
-top_terminals = collect_terminals(top_series)
-bot_terminals = collect_terminals(bot_series)
-
-# ══════════════════════════════════════════════════════════════════════════════
-# TOP-5 SUMMARY OF SUMMARY  (shown before detailed calculations)
-# ══════════════════════════════════════════════════════════════════════════════
-st.markdown("---")
-st.subheader("⭐ Top 5 Best Cutting Combinations")
-st.markdown("_Ranked by cumulative waste. Full details in the summary section below._")
-
-col_top, col_bot = st.columns(2)
-with col_top:
-    st.markdown("**Top Bars — Best 5**")
-    print_summary(top_terminals, "", top_n=5)
-with col_bot:
-    st.markdown("**Bottom Bars — Best 5**")
-    print_summary(bot_terminals, "", top_n=5)
-
-# ══════════════════════════════════════════════════════════════════════════════
 # SECTION 3 — CLEAR SPANS
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("---")
@@ -542,6 +513,35 @@ def print_all_series(all_series, zone_label_fn=None):
                     st.markdown(f"**Splicing with {parent_bar['label']}** {zlbl}")
                 print_table(group)
                 st.markdown("")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BUILD ALL SERIES
+# ══════════════════════════════════════════════════════════════════════════════
+top_series = build_top_series()
+bot_series = build_bot_series()
+
+def collect_terminals(all_series):
+    t = [b for s in all_series for b in s if b["is_terminal"] and b["cl"] is not None]
+    t.sort(key=lambda b: b["cum_waste"])
+    return t
+
+top_terminals = collect_terminals(top_series)
+bot_terminals = collect_terminals(bot_series)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TOP-5 SUMMARY OF SUMMARY
+# ══════════════════════════════════════════════════════════════════════════════
+st.markdown("---")
+st.subheader("⭐ Top 5 Best Cutting Combinations")
+st.markdown("_Ranked by cumulative waste. Full details in the summary section below._")
+
+col_top, col_bot = st.columns(2)
+with col_top:
+    st.markdown("**Top Bars — Best 5**")
+    print_summary(top_terminals, "", top_n=5)
+with col_bot:
+    st.markdown("**Bottom Bars — Best 5**")
+    print_summary(bot_terminals, "", top_n=5)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PRINT — TOP BARS
