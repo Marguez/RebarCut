@@ -172,24 +172,106 @@ def print_table(rows):
         else:
             c3.write(f"{r['cl']:,.2f}"); c4.write(f"{r['waste']:,.2f}"); c5.write(f"{r['cum_waste']:,.2f}")
 
+def optimize_chain(chain_rls, chain_wastes):
+    """
+    Find the single best waste reuse across the chain.
+    For each Wi, try Wi - Lj for all j != i.
+    Condition: Wi >= Lj (waste fully covers that component length).
+    Saving = commercial length of component j = Lj + Wj.
+    Returns the best reuse dict, or None if no reuse possible.
+    """
+    best = None
+    for i, wi in enumerate(chain_wastes):
+        if wi is None or wi <= 0:
+            continue
+        for j, lj in enumerate(chain_rls):
+            if j == i:
+                continue
+            wj = chain_wastes[j]
+            if wj is None:
+                continue
+            if wi >= lj:                            # waste covers the component length
+                saving = lj + wj                    # full commercial bar of j eliminated
+                if best is None or saving > best["saving"]:
+                    best = {
+                        "i": i,                     # waste index being reused
+                        "j": j,                     # component index being covered
+                        "wi_original": wi,
+                        "lj": lj,
+                        "wj": wj,
+                        "remainder": wi - lj,       # new waste for component i after reuse
+                        "saving": saving,
+                    }
+    return best
+
 def print_summary(terminals, title, top_n=None):
-    st.markdown(f"**{title}**")
+    if title:
+        st.markdown(f"**{title}**")
     st.markdown("_\\* = terminal bar. All values in metres (m)._")
     if not terminals:
         st.info("No complete chains found."); return
 
-    rows = terminals[:top_n] if top_n else terminals
+    # Apply reuse optimization to each terminal for ranking
+    enhanced = []
+    for bar in terminals:
+        reuse   = optimize_chain(bar["chain_rls"], bar["chain_wastes"])
+        opt_cum = bar["cum_waste"] - reuse["saving"] if reuse else bar["cum_waste"]
+        enhanced.append({**bar, "reuse": reuse, "opt_cum_waste": opt_cum})
 
-    h1,h2,h3,h4 = st.columns([2,3,3,2])
-    h1.markdown("**Terminal Label**"); h2.markdown("**Component Lengths (m)**")
-    h3.markdown("**Component Wastes (m)**"); h4.markdown("**Cumul. Waste (m)**")
+    enhanced.sort(key=lambda b: b["opt_cum_waste"])
+    rows = enhanced[:top_n] if top_n else enhanced
 
-    for bar in rows:
-        c1,c2,c3,c4 = st.columns([2,3,3,2])
-        c1.write(f"{bar['label']}*")
-        c2.write(" — ".join(f"{rl/1000:.2f}" for rl in bar["chain_rls"]))
-        c3.write(" — ".join(f"{w/1000:.2f}" if w is not None else "—" for w in bar["chain_wastes"]))
-        c4.write(f"{bar['cum_waste']/1000:.2f}")
+    h1, h2, h3, h4, h5 = st.columns([1.8, 2.8, 2.8, 2.8, 1.8])
+    h1.markdown("**Label**")
+    h2.markdown("**Component Lengths (m)**")
+    h3.markdown("**Original Wastes (m)**")
+    h4.markdown("**Reduced Wastes (m)**")
+    h5.markdown("**Opt. Cum. Waste (m)**")
+
+    for b in rows:
+        rls    = b["chain_rls"]
+        wastes = b["chain_wastes"]
+        reuse  = b["reuse"]
+        n      = len(rls)
+
+        # Component lengths — unchanged
+        len_str = " — ".join(f"{rl/1000:.2f}" for rl in rls)
+
+        # Original wastes
+        orig_str = " — ".join(
+            f"{w/1000:.2f}" if w is not None else "—" for w in wastes
+        )
+
+        # Reduced wastes column:
+        # - Wi becomes WRi = Wi - Lj  (show as bold with note)
+        # - Wj is struck through (eliminated — covered by Wi)
+        # - all others unchanged
+        if reuse:
+            i, j = reuse["i"], reuse["j"]
+            red_parts = []
+            for k, w in enumerate(wastes):
+                if k == i:
+                    red_parts.append(f"**{reuse['remainder']/1000:.2f}**")
+                elif k == j:
+                    red_parts.append(f"~~{w/1000:.2f}~~")
+                else:
+                    red_parts.append(f"{w/1000:.2f}" if w is not None else "—")
+            reuse_note = (
+                f"W{i+1}({reuse['wi_original']/1000:.2f}) covers "
+                f"L{j+1}({reuse['lj']/1000:.2f}) → "
+                f"WR{i+1}={reuse['remainder']/1000:.2f}, "
+                f"W{j+1} eliminated"
+            )
+            red_str = " — ".join(red_parts) + f"  \n_{reuse_note}_"
+        else:
+            red_str = orig_str + "  \n_No reuse possible_"
+
+        c1, c2, c3, c4, c5 = st.columns([1.8, 2.8, 2.8, 2.8, 1.8])
+        c1.write(f"{b['label']}*")
+        c2.write(len_str)
+        c3.write(orig_str)
+        c4.markdown(red_str)
+        c5.write(f"{b['opt_cum_waste']/1000:.2f}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TOP BAR ENGINE
