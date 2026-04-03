@@ -92,6 +92,35 @@ st.session_state["col_widths"]   = col_widths
 st.session_state["span_lengths"] = span_lengths
 
 # ══════════════════════════════════════════════════════════════════════════════
+# BUILD ALL SERIES (must happen before display so top-5 can be shown early)
+# ══════════════════════════════════════════════════════════════════════════════
+top_series = build_top_series()
+bot_series = build_bot_series()
+
+def collect_terminals(all_series):
+    t = [b for s in all_series for b in s if b["is_terminal"] and b["cl"] is not None]
+    t.sort(key=lambda b: b["cum_waste"])
+    return t
+
+top_terminals = collect_terminals(top_series)
+bot_terminals = collect_terminals(bot_series)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TOP-5 SUMMARY OF SUMMARY  (shown before detailed calculations)
+# ══════════════════════════════════════════════════════════════════════════════
+st.markdown("---")
+st.subheader("⭐ Top 5 Best Cutting Combinations")
+st.markdown("_Ranked by cumulative waste. Full details in the summary section below._")
+
+col_top, col_bot = st.columns(2)
+with col_top:
+    st.markdown("**Top Bars — Best 5**")
+    print_summary(top_terminals, "", top_n=5)
+with col_bot:
+    st.markdown("**Bottom Bars — Best 5**")
+    print_summary(bot_terminals, "", top_n=5)
+
+# ══════════════════════════════════════════════════════════════════════════════
 # SECTION 3 — CLEAR SPANS
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("---")
@@ -172,22 +201,24 @@ def print_table(rows):
         else:
             c3.write(f"{r['cl']:,.2f}"); c4.write(f"{r['waste']:,.2f}"); c5.write(f"{r['cum_waste']:,.2f}")
 
-def print_summary(terminals, title):
+def print_summary(terminals, title, top_n=None):
     st.markdown(f"**{title}**")
-    st.markdown("_\\* = terminal bar. Lengths in metres._")
+    st.markdown("_\\* = terminal bar. All values in metres (m)._")
     if not terminals:
         st.info("No complete chains found."); return
 
+    rows = terminals[:top_n] if top_n else terminals
+
     h1,h2,h3,h4 = st.columns([2,3,3,2])
     h1.markdown("**Terminal Label**"); h2.markdown("**Component Lengths (m)**")
-    h3.markdown("**Component Wastes (mm)**"); h4.markdown("**Cumul. Waste (mm)**")
+    h3.markdown("**Component Wastes (m)**"); h4.markdown("**Cumul. Waste (m)**")
 
-    for bar in terminals:
+    for bar in rows:
         c1,c2,c3,c4 = st.columns([2,3,3,2])
         c1.write(f"{bar['label']}*")
         c2.write(" — ".join(f"{rl/1000:.2f}" for rl in bar["chain_rls"]))
-        c3.write(" — ".join(f"{w:.2f}" if w is not None else "—" for w in bar["chain_wastes"]))
-        c4.write(f"{bar['cum_waste']:,.2f}")
+        c3.write(" — ".join(f"{w/1000:.2f}" if w is not None else "—" for w in bar["chain_wastes"]))
+        c4.write(f"{bar['cum_waste']/1000:.2f}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TOP BAR ENGINE
@@ -490,12 +521,6 @@ def build_bot_series():
     return series
 
 # ══════════════════════════════════════════════════════════════════════════════
-# BUILD
-# ══════════════════════════════════════════════════════════════════════════════
-top_series = build_top_series()
-bot_series = build_bot_series()
-
-# ══════════════════════════════════════════════════════════════════════════════
 # PRINT HELPER
 # ══════════════════════════════════════════════════════════════════════════════
 def print_all_series(all_series, zone_label_fn=None):
@@ -540,18 +565,13 @@ print_all_series(bot_series, bot_zone_lbl)
 # SUMMARY
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("---")
-st.subheader("Summary — Complete Chains Ranked by Cumulative Waste")
-
-def collect_terminals(all_series):
-    t = [b for s in all_series for b in s if b["is_terminal"] and b["cl"] is not None]
-    t.sort(key=lambda b: b["cum_waste"])
-    return t
+st.subheader("Summary — All Complete Chains Ranked by Cumulative Waste")
 
 st.markdown("#### Top Bars")
-print_summary(collect_terminals(top_series), "Top Bar Chains")
+print_summary(top_terminals, "Top Bar Chains")
 
 st.markdown("#### Bottom Bars")
-print_summary(collect_terminals(bot_series), "Bottom Bar Chains")
+print_summary(bot_terminals, "Bottom Bar Chains")
 
 st.markdown("---")
 if st.button("Confirm →"):
