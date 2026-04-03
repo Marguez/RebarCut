@@ -535,13 +535,11 @@ st.markdown("---")
 st.subheader("⭐ Top 5 Best Cutting Combinations")
 st.markdown("_Ranked by cumulative waste. Full details in the summary section below._")
 
-col_top, col_bot = st.columns(2)
-with col_top:
-    st.markdown("**Top Bars — Best 5**")
-    print_summary(top_terminals, "", top_n=5)
-with col_bot:
-    st.markdown("**Bottom Bars — Best 5**")
-    print_summary(bot_terminals, "", top_n=5)
+st.markdown("**Top Bars — Best 5**")
+print_summary(top_terminals, "", top_n=5)
+
+st.markdown("**Bottom Bars — Best 5**")
+print_summary(bot_terminals, "", top_n=5)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PRINT — TOP BARS
