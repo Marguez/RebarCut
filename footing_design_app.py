@@ -75,21 +75,25 @@ n_cols = no_spans + 1
 
 if "col_widths"   not in st.session_state or len(st.session_state["col_widths"])   != n_cols:    st.session_state["col_widths"]   = [400]  * n_cols
 if "span_lengths" not in st.session_state or len(st.session_state["span_lengths"]) != no_spans: st.session_state["span_lengths"] = [6000] * no_spans
+if "beam_depths"  not in st.session_state or len(st.session_state["beam_depths"])  != no_spans: st.session_state["beam_depths"]  = [400]  * no_spans
 
 col_widths   = list(st.session_state["col_widths"])
 span_lengths = list(st.session_state["span_lengths"])
+beam_depths  = list(st.session_state["beam_depths"])
 
-h1, h2, h3 = st.columns([1, 2, 1])
-h1.markdown("**Column**"); h2.markdown("**Span Length (mm)**"); h3.markdown("**Column**")
+h1, h2, h3, h4 = st.columns([1, 2, 1.5, 1])
+h1.markdown("**Column**"); h2.markdown("**Span Length (mm)**"); h3.markdown("**Beam Depth D (mm)**"); h4.markdown("**Column**")
 for i in range(no_spans):
-    c1, c2, c3 = st.columns([1, 2, 1])
-    with c1: col_widths[i]   = st.number_input(f"C{i+1} (mm)", min_value=100, max_value=3000, value=col_widths[i],   step=50,  key=f"cw_{i}")
-    with c2: span_lengths[i] = st.number_input(f"L{i+1} (mm)", min_value=500, max_value=50000,value=span_lengths[i], step=100, key=f"sl_{i}")
+    c1, c2, c3, c4 = st.columns([1, 2, 1.5, 1])
+    with c1: col_widths[i]   = st.number_input(f"C{i+1} (mm)", min_value=100, max_value=3000,  value=col_widths[i],   step=50,  key=f"cw_{i}")
+    with c2: span_lengths[i] = st.number_input(f"L{i+1} (mm)", min_value=500, max_value=50000, value=span_lengths[i], step=100, key=f"sl_{i}")
+    with c3: beam_depths[i]  = st.number_input(f"D{i+1} (mm)", min_value=100, max_value=3000,  value=beam_depths[i],  step=50,  key=f"bd_{i}")
     if i == no_spans - 1:
-        with c3: col_widths[n_cols-1] = st.number_input(f"C{n_cols} (mm)", min_value=100, max_value=3000, value=col_widths[n_cols-1], step=50, key=f"cw_{n_cols-1}")
+        with c4: col_widths[n_cols-1] = st.number_input(f"C{n_cols} (mm)", min_value=100, max_value=3000, value=col_widths[n_cols-1], step=50, key=f"cw_{n_cols-1}")
 
 st.session_state["col_widths"]   = col_widths
 st.session_state["span_lengths"] = span_lengths
+st.session_state["beam_depths"]  = beam_depths
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 3 — CLEAR SPANS
@@ -388,67 +392,99 @@ def build_top_series():
 # Terminal (from any splice point): travel remaining spans to right hook
 #   same as top bars: remainder_of_current_span + cols/spans + S[last] + Emb + Hk
 
-def _dist_from_left_of_span_p_to_right_hook(p_span, p_side):
-    """Distance from the LAP START of (p_span, p_side) to the right hook."""
-    if p_side == "left":
-        remainder = clear_spans[p_span] - bot_zones[p_span]["left"]
-    else:  # "right" — lap starts at start of right zone
-        remainder = bot_zones[p_span]["right"]
+def _right_stop(i):
+    """
+    Distance from the LEFT face of span i to where a right-zone bar terminates.
+    Governed by min of:
+      - S[i] - bot_right[i] + LapB  (splice zone with lap)
+      - S[i] - 2*D[i]               (2D limit, no LapB)
+    Equivalently: S[i] - max(bot_right[i] - LapB, 2*D[i])
+    Returns the stop distance AND which remainder governs.
+    remainder = max(bot_right[i] - LapB, 2*D[i])
+    """
+    zone_stop = bot_zones[i]["right"] - LapB   # = bot_right[i] - LapB
+    two_d     = 2 * beam_depths[i]
+    remainder = max(zone_stop, two_d)           # larger remainder = shorter bar
+    stop_dist = clear_spans[i] - remainder      # distance from left face to stop
+    return stop_dist, remainder                 # stop_dist includes the LapB if zone governs
 
-    d = remainder + col_widths[p_span + 1]
+def _right_remainder(i):
+    """Remainder of span i from the right-zone lap start to the end of the span."""
+    return max(bot_zones[i]["right"] - LapB, 2 * beam_depths[i])
+
+def _dist_from_bot_p_to_right_hook(p_span, p_side, p_remainder):
+    """
+    Distance from the lap start of (p_span, p_side) to the right hook.
+    p_remainder: remainder of span p (distance from lap start to end of span p).
+    """
+    d = p_remainder + col_widths[p_span + 1]
     for k in range(p_span + 1, last):
         d += clear_spans[k] + col_widths[k + 1]
     d += clear_spans[last] + Emb + Hk
     return d
 
-def _dist_between_splice_points(p_span, p_side, q_span, q_side):
+def _dist_between_bot_points(p_span, p_side, p_remainder, q_span, q_side):
     """
-    Distance of a bar that starts at the beginning of splice zone (p_span, p_side)
-    and terminates at the end of the lap at (q_span, q_side).
+    Distance of a bar starting at the lap start of (p_span, p_side) and
+    terminating at the end of the lap at (q_span, q_side).
+
+    p_remainder: distance from lap start of p to end of span p.
+      - (p, left)  → p_remainder = S[p] - 2*D[p]
+      - (p, right) → p_remainder = max(bot_right[p] - LapB, 2*D[p])
+
+    Termination formulas:
+      (p, left) → (p, right): (S[p] - 2D[p]) - governed_stop + LapB_if_zone
+        = S[p] - 2D[p] - (S[p] - stop_dist) + ??
+        Simpler: bar length = stop_dist_from_left_face - 2D[p] + LapB_component
+        Actually: distance from lap start of (p,left) to stop of (p,right)
+        = (S[p] - 2D[p]) - _right_remainder(p)
+        but we still need +LapB if zone governs — which is baked into stop_dist already:
+        stop_dist = S[p] - remainder, and if zone governs the bar reaches S[p]-bot_right[i]+LapB
+        So: distance = stop_dist - 2*D[p]  [from 2D point to stop point, both measured from left face]
+      (p, left) → (q, left):  p_remainder + C[p+1] + [...] + 2*D[q] + LapB
+      (p, left) → (q, right): p_remainder + C[p+1] + [...] + stop_dist(q)
+      (p, right)→ (q, left):  p_remainder + C[p+1] + [...] + 2*D[q] + LapB
+      (p, right)→ (q, right): p_remainder + C[p+1] + [...] + stop_dist(q)
     """
-    # Start: beginning of (p_span, p_side)
-    # End:   beginning of (q_span, q_side) + LapB
-
-    if p_side == "left":
-        remainder_p = clear_spans[p_span] - bot_zones[p_span]["left"]
-    else:
-        remainder_p = bot_zones[p_span]["right"]
-
-    # Same span, right zone (only valid if p_side=="left" and q_side=="right" and q_span==p_span)
+    # Same span: (p,left) → (p,right)
     if q_span == p_span and p_side == "left" and q_side == "right":
-        d = (clear_spans[p_span] - bot_zones[p_span]["left"] - bot_zones[p_span]["right"]) + LapB
-        return d
+        stop_dist, _ = _right_stop(p_span)
+        # distance from 2D[p] point to stop point (both from left face of span)
+        return stop_dist - 2 * beam_depths[p_span]
 
-    # Travel remainder of p_span, then column, then interior spans up to q_span
-    d = remainder_p + col_widths[p_span + 1]
+    # Cross-span
+    d = p_remainder + col_widths[p_span + 1]
     for k in range(p_span + 1, q_span):
         d += clear_spans[k] + col_widths[k + 1]
 
-    # Into q_span
     if q_side == "left":
-        d += LapB
-    else:  # right zone
-        d += (clear_spans[q_span] - bot_zones[q_span]["right"]) + LapB
+        d += 2 * beam_depths[q_span] + LapB
+    else:  # right
+        stop_dist, _ = _right_stop(q_span)
+        d += stop_dist
 
     return d
 
 def bot_children_of(parent, series_num):
     if parent["is_terminal"] or parent["cl"] is None: return []
 
-    p_span  = parent["span_idx"]
-    p_side  = parent["zone_side"]
-    pcw     = parent["cum_waste"]
-    psuffix = parent["suffix"]
-    sn      = str(series_num)
+    p_span    = parent["span_idx"]
+    p_side    = parent["zone_side"]
+    pcw       = parent["cum_waste"]
+    psuffix   = parent["suffix"]
+    sn        = str(series_num)
     pchain_rls    = parent["chain_rls"]
     pchain_wastes = parent["chain_wastes"]
-    result  = []
-    sub     = 0
+    result    = []
+    sub       = 0
 
-    # Generate all splice points to the right of (p_span, p_side) in order
-    # Points: (p_span, "right") if p_side=="left", then (p_span+1,"left"),
-    #         (p_span+1,"right"), (p_span+2,"left"), ... up to (last,"right")
+    # p_remainder: distance from this bar's lap start to end of span p
+    if p_side == "left":
+        p_remainder = clear_spans[p_span] - 2 * beam_depths[p_span]
+    else:
+        p_remainder = _right_remainder(p_span)
 
+    # Generate all splice points to the right
     points = []
     if p_side == "left":
         points.append((p_span, "right"))
@@ -457,22 +493,22 @@ def bot_children_of(parent, series_num):
         points.append((q, "right"))
 
     for (q_span, q_side) in points:
-        d   = _dist_between_splice_points(p_span, p_side, q_span, q_side)
+        d   = _dist_between_bot_points(p_span, p_side, p_remainder, q_span, q_side)
         lbl = f"R{sn}{psuffix}{ALPHA[sub]}"
         bar = make_bar(lbl, d, pcw, q_span, q_side, False, psuffix+ALPHA[sub], pchain_rls, pchain_wastes)
         result.append(bar); sub += 1
-        if bar["cl"] is None: return result  # exceeded, stop
+        if bar["cl"] is None: return result
 
-    # Terminal — from (p_span, p_side) to right hook
+    # Terminal
     if p_span < last:
-        d   = _dist_from_left_of_span_p_to_right_hook(p_span, p_side)
+        d   = _dist_from_bot_p_to_right_hook(p_span, p_side, p_remainder)
         lbl = f"R{sn}{psuffix}{ALPHA[sub]}"
         bar = make_bar(lbl, d, pcw, last, "terminal", True, psuffix+ALPHA[sub], pchain_rls, pchain_wastes)
         result.append(bar)
     return result
 
 def bot_children_of_last_zone(parent, series_num):
-    """Parent is at (last, left) or (last, right) — only terminal child possible."""
+    """Parent is at (last, left) or (last, right) — terminal only."""
     if parent["is_terminal"] or parent["cl"] is None: return []
     if parent["span_idx"] != last: return []
 
@@ -481,57 +517,50 @@ def bot_children_of_last_zone(parent, series_num):
     p_side = parent["zone_side"]
 
     if p_side == "left":
-        # Right zone of last span is still reachable before terminal
-        points = [("right",)]
+        p_remainder = clear_spans[last] - 2 * beam_depths[last]
     else:
-        points = []
+        p_remainder = _right_remainder(last)
 
     result = []; sub = 0
 
-    for (side,) in points:
-        d   = _dist_between_splice_points(last, p_side, last, side)
+    # If at (last, left), right zone of last span is still reachable
+    if p_side == "left":
+        d   = _dist_between_bot_points(last, "left", p_remainder, last, "right")
         lbl = f"R{sn}{psuffix}{ALPHA[sub]}"
-        bar = make_bar(lbl, d, pcw, last, side, False, psuffix+ALPHA[sub], pchain_rls, pchain_wastes)
+        bar = make_bar(lbl, d, pcw, last, "right", False, psuffix+ALPHA[sub], pchain_rls, pchain_wastes)
         result.append(bar); sub += 1
         if bar["cl"] is None: return result
 
     # Terminal from last zone
     if p_side == "left":
-        d = bot_zones[last]["right"] + Emb + Hk
+        term_d = p_remainder + Emb + Hk
     else:
-        d = Emb + Hk   # already past right zone, just embed + hook
-        # Actually: from right zone start to right hook
-        d = bot_zones[last]["right"] + Emb + Hk
-
-    # Correct: from (last, right) the remainder to hook = bot_zones[last]["right"] + Emb + Hk
-    # From (last, left) if right zone was exceeded: short-cut terminal
-    if p_side == "left":
-        # terminal skipping right zone (right zone exceeded)
-        d = clear_spans[last] - bot_zones[last]["left"] + Emb + Hk
-    else:
-        d = bot_zones[last]["right"] + Emb + Hk
+        term_d = _right_remainder(last) + Emb + Hk
 
     lbl = f"R{sn}{psuffix}{ALPHA[sub]}"
-    bar = make_bar(lbl, d, pcw, last, "terminal", True, psuffix+ALPHA[sub], pchain_rls, pchain_wastes)
+    bar = make_bar(lbl, term_d, pcw, last, "terminal", True, psuffix+ALPHA[sub], pchain_rls, pchain_wastes)
     result.append(bar)
     return result
 
 def build_bot_series():
-    # R1: left hook to each splice point in order
     r1 = []; sub = 0
 
     for i in range(no_spans):
-        # Left zone of span i
+        # ── Left zone of span i ──
+        # Hk + Emb + [accumulated spans/cols] + 2*D[i] + LapB
         d = Emb
         for k in range(i): d += clear_spans[k] + col_widths[k+1]
-        rl = Hk + d + LapB
+        rl = Hk + d + 2 * beam_depths[i] + LapB
         lbl = f"R1{ALPHA[sub]}"
         bar = make_bar(lbl, rl, 0, i, "left", False, ALPHA[sub], None, None)
         r1.append(bar); sub += 1
         if bar["cl"] is None: break
 
-        # Right zone of span i
-        rl = Hk + d + (clear_spans[i] - bot_zones[i]["right"]) + LapB
+        # ── Right zone of span i ──
+        # Hk + Emb + [accumulated] + stop_dist(i)
+        # stop_dist = S[i] - max(bot_right[i] - LapB, 2*D[i])
+        stop_dist, _ = _right_stop(i)
+        rl = Hk + d + stop_dist
         lbl = f"R1{ALPHA[sub]}"
         bar = make_bar(lbl, rl, 0, i, "right", False, ALPHA[sub], None, None)
         r1.append(bar); sub += 1
@@ -542,18 +571,15 @@ def build_bot_series():
     if last_mid:
         lm_span = last_mid["span_idx"]; lm_side = last_mid["zone_side"]
         if lm_side == "left":
-            remainder = clear_spans[lm_span] - bot_zones[lm_span]["left"]
+            p_rem = clear_spans[lm_span] - 2 * beam_depths[lm_span]
         else:
-            remainder = bot_zones[lm_span]["right"]
-        d = remainder + col_widths[lm_span+1] if lm_span < last else (remainder if lm_side=="right" else clear_spans[last]-bot_zones[last]["left"])
-        # Simpler: reuse helper if span < last
+            p_rem = _right_remainder(lm_span)
+
         if lm_span < last:
-            d = _dist_from_left_of_span_p_to_right_hook(lm_span, lm_side)
+            d = _dist_from_bot_p_to_right_hook(lm_span, lm_side, p_rem)
         else:
-            if lm_side == "left":
-                d = clear_spans[last] - bot_zones[last]["left"] + Emb + Hk
-            else:
-                d = bot_zones[last]["right"] + Emb + Hk
+            d = p_rem + Emb + Hk
+
         lbl = f"R1{ALPHA[sub]}"
         bar = make_bar(lbl, d, 0, last, "terminal", True, ALPHA[sub], last_mid["chain_rls"], last_mid["chain_wastes"])
         r1.append(bar)
