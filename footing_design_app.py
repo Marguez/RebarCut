@@ -96,6 +96,17 @@ st.session_state["span_lengths"] = span_lengths
 st.session_state["beam_depths"]  = beam_depths
 
 # ══════════════════════════════════════════════════════════════════════════════
+# RUN BUTTON — all computation below only executes after this is clicked
+# ══════════════════════════════════════════════════════════════════════════════
+st.markdown("---")
+if st.button("▶ Run Optimization", type="primary"):
+    st.session_state["run_optimization"] = True
+
+if not st.session_state.get("run_optimization", False):
+    st.info("Fill in all inputs above, then click **▶ Run Optimization** to compute.")
+    st.stop()
+
+# ══════════════════════════════════════════════════════════════════════════════
 # SECTION 3 — CLEAR SPANS
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("---")
@@ -680,5 +691,6 @@ st.markdown("#### Bottom Bars")
 print_summary(bot_terminals, "Bottom Bar Chains")
 
 st.markdown("---")
-if st.button("Confirm →"):
-    st.success("Confirmed! Ready for the next step.")
+if st.button("🔄 Reset — Change Inputs"):
+    st.session_state["run_optimization"] = False
+    st.rerun()
