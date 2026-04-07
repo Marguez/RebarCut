@@ -2,6 +2,7 @@
 BEAM REBAR CUTTING OPTIMIZER — Top & Bottom Bars Running Length Series
 """
 import streamlit as st
+import pandas as pd
 
 st.set_page_config(page_title="Beam Rebar Optimizer", page_icon="🏗️")
 st.title("🏗️ Beam Rebar Optimizer")
@@ -16,7 +17,7 @@ com_lengths_m = st.multiselect(
     default=[6.0, 7.5, 9.0, 10.5, 12.0],
 )
 com_lengths_m = sorted(com_lengths_m)
-com_lengths   = [l * 1000 for l in com_lengths_m]
+com_lengths   = tuple(l * 1000 for l in com_lengths_m)   # tuple for hashability
 max_com       = max(com_lengths) if com_lengths else 12000
 st.write("Selected (mm):", [f"{l:,.0f}" for l in com_lengths])
 
@@ -96,7 +97,7 @@ st.session_state["span_lengths"] = span_lengths
 st.session_state["beam_depths"]  = beam_depths
 
 # ══════════════════════════════════════════════════════════════════════════════
-# RUN BUTTON — all computation below only executes after this is clicked
+# RUN BUTTON
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("---")
 if st.button("▶ Run Optimization", type="primary"):
@@ -111,16 +112,13 @@ if not st.session_state.get("run_optimization", False):
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("---")
 st.subheader("Clear Span Lengths")
-clear_spans = [span_lengths[i] - 0.5*col_widths[i] - 0.5*col_widths[i+1] for i in range(no_spans)]
+clear_spans = tuple(span_lengths[i] - 0.5*col_widths[i] - 0.5*col_widths[i+1] for i in range(no_spans))
 
-h1, h2, h3, h4 = st.columns([1, 2, 2, 2])
-h1.markdown("**Span**"); h2.markdown("**L (mm)**"); h3.markdown("**−0.5C−0.5C**"); h4.markdown("**Clear S (mm)**")
-for i in range(no_spans):
-    ded = 0.5*col_widths[i] + 0.5*col_widths[i+1]
-    r1,r2,r3,r4 = st.columns([1,2,2,2])
-    r1.write(f"S{i+1}"); r2.write(f"{span_lengths[i]:,.2f}"); r3.write(f"− {ded:,.2f}"); r4.write(f"**{clear_spans[i]:,.2f}**")
-
-st.markdown("---")
+rows_cs = {"Span": [f"S{i+1}" for i in range(no_spans)],
+           "L (mm)": [f"{span_lengths[i]:,.2f}" for i in range(no_spans)],
+           "− 0.5C − 0.5C (mm)": [f"− {0.5*col_widths[i]+0.5*col_widths[i+1]:,.2f}" for i in range(no_spans)],
+           "Clear S (mm)": [f"{clear_spans[i]:,.2f}" for i in range(no_spans)]}
+st.dataframe(pd.DataFrame(rows_cs), hide_index=True, use_container_width=False)
 st.metric("Total Beam Length", f"{sum(col_widths)+sum(span_lengths):,.2f} mm")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -129,7 +127,8 @@ st.metric("Total Beam Length", f"{sum(col_widths)+sum(span_lengths):,.2f} mm")
 st.markdown("---")
 st.subheader("Splice Zones")
 
-top_zones, bot_zones = [], []
+top_zones = []
+bot_zones = []
 for i in range(no_spans):
     S = clear_spans
     tl = SplTEx*S[0]          if i==0          else SplTIn*max(S[i-1],S[i])
@@ -139,486 +138,265 @@ for i in range(no_spans):
     top_zones.append({"left": tl, "right": tr})
     bot_zones.append({"left": bl, "right": br})
 
+top_zones = tuple(top_zones)
+bot_zones = tuple(bot_zones)
+
 st.markdown("**Top Bars**")
-h1,h2,h3 = st.columns([1,2,2]); h1.markdown("**Span**"); h2.markdown("**Left (mm)**"); h3.markdown("**Right (mm)**")
-for i in range(no_spans):
-    r1,r2,r3 = st.columns([1,2,2]); r1.write(f"S{i+1}"); r2.write(f"{top_zones[i]['left']:,.2f}"); r3.write(f"{top_zones[i]['right']:,.2f}")
+st.dataframe(pd.DataFrame({
+    "Span":       [f"S{i+1}" for i in range(no_spans)],
+    "Left (mm)":  [f"{top_zones[i]['left']:,.2f}"  for i in range(no_spans)],
+    "Right (mm)": [f"{top_zones[i]['right']:,.2f}" for i in range(no_spans)],
+}), hide_index=True, use_container_width=False)
 
 st.markdown("**Bottom Bars**")
-h1,h2,h3 = st.columns([1,2,2]); h1.markdown("**Span**"); h2.markdown("**Left (mm)**"); h3.markdown("**Right (mm)**")
-for i in range(no_spans):
-    r1,r2,r3 = st.columns([1,2,2]); r1.write(f"S{i+1}"); r2.write(f"{bot_zones[i]['left']:,.2f}"); r3.write(f"{bot_zones[i]['right']:,.2f}")
+st.dataframe(pd.DataFrame({
+    "Span":       [f"S{i+1}" for i in range(no_spans)],
+    "Left (mm)":  [f"{bot_zones[i]['left']:,.2f}"  for i in range(no_spans)],
+    "Right (mm)": [f"{bot_zones[i]['right']:,.2f}" for i in range(no_spans)],
+}), hide_index=True, use_container_width=False)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# HELPERS
+# PURE COMPUTATION HELPERS  (no st.* calls — safe to cache)
 # ══════════════════════════════════════════════════════════════════════════════
 ALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-last  = no_spans - 1
 
-def ceiling_com(rl):
-    for cl in sorted(com_lengths):
+def _ceiling_com(rl, com_lengths):
+    for cl in com_lengths:
         if cl >= rl: return cl
     return None
 
-def get_waste(rl):
-    cl = ceiling_com(rl)
+def _get_waste(rl, com_lengths):
+    cl = _ceiling_com(rl, com_lengths)
     return cl, (cl - rl) if cl is not None else None
 
-def make_bar(label, rl, pcw, span_idx, zone_side, is_terminal, suffix, parent_chain_rls=None, parent_chain_wastes=None):
-    cl, w = get_waste(rl)
+def _make_bar(label, rl, pcw, span_idx, zone_side, is_terminal, suffix,
+              com_lengths, parent_chain_rls=None, parent_chain_wastes=None):
+    cl, w = _get_waste(rl, com_lengths)
     cum_w = (pcw + w) if (pcw is not None and w is not None) else None
-    chain_rls    = (parent_chain_rls    or []) + [rl]
-    chain_wastes = (parent_chain_wastes or []) + [w]
+    chain_rls    = (parent_chain_rls    or ()) + (rl,)
+    chain_wastes = (parent_chain_wastes or ()) + (w,)
     return {"label": label, "rl": rl, "cl": cl, "waste": w,
             "cum_waste": cum_w, "span_idx": span_idx, "zone_side": zone_side,
             "is_terminal": is_terminal, "parent_cum_waste": pcw,
             "suffix": suffix, "chain_rls": chain_rls, "chain_wastes": chain_wastes}
 
-def print_table(rows):
-    h1,h2,h3,h4,h5 = st.columns([1.5,2,2,2,2])
-    h1.markdown("**Label**"); h2.markdown("**Length (mm)**")
-    h3.markdown("**Com. Length (mm)**"); h4.markdown("**Waste (mm)**"); h5.markdown("**Cumul. Waste (mm)**")
-    for r in rows:
-        c1,c2,c3,c4,c5 = st.columns([1.5,2,2,2,2])
-        lbl = f"{r['label']}*" if r["is_terminal"] else r["label"]
-        c1.write(lbl); c2.write(f"{r['rl']:,.2f}")
-        if r["cl"] is None:
-            c3.write("**EXCEEDED**"); c4.write("—"); c5.write("—")
-        else:
-            c3.write(f"{r['cl']:,.2f}"); c4.write(f"{r['waste']:,.2f}"); c5.write(f"{r['cum_waste']:,.2f}")
-
-def optimize_chain(chain_rls, chain_wastes):
-    """
-    Find the single best waste reuse across the chain.
-    For each Wi, try Wi - Lj for all j != i.
-    Condition: Wi >= Lj (waste fully covers that component length).
-    Saving = commercial length of component j = Lj + Wj.
-    Returns the best reuse dict, or None if no reuse possible.
-    """
-    best = None
-    for i, wi in enumerate(chain_wastes):
-        if wi is None or wi <= 0:
-            continue
-        for j, lj in enumerate(chain_rls):
-            if j == i:
-                continue
-            wj = chain_wastes[j]
-            if wj is None:
-                continue
-            if wi >= lj:                            # waste covers the component length
-                saving = lj + wj                    # full commercial bar of j eliminated
-                if best is None or saving > best["saving"]:
-                    best = {
-                        "i": i,                     # waste index being reused
-                        "j": j,                     # component index being covered
-                        "wi_original": wi,
-                        "lj": lj,
-                        "wj": wj,
-                        "remainder": wi - lj,       # new waste for component i after reuse
-                        "saving": saving,
-                    }
-    return best
-
-def print_summary(terminals, title, top_n=None):
-    if title:
-        st.markdown(f"**{title}**")
-    st.markdown("_\\* = terminal bar. All values in metres (m)._")
-    if not terminals:
-        st.info("No complete chains found."); return
-
-    # Apply reuse optimization to each terminal for ranking
-    enhanced = []
-    for bar in terminals:
-        reuse   = optimize_chain(bar["chain_rls"], bar["chain_wastes"])
-        opt_cum = bar["cum_waste"] - reuse["saving"] if reuse else bar["cum_waste"]
-        enhanced.append({**bar, "reuse": reuse, "opt_cum_waste": opt_cum})
-
-    enhanced.sort(key=lambda b: b["opt_cum_waste"])
-    rows = enhanced[:top_n] if top_n else enhanced
-
-    h1, h2, h3, h4, h5 = st.columns([1.8, 2.8, 2.8, 2.8, 1.8])
-    h1.markdown("**Label**")
-    h2.markdown("**Component Lengths (m)**")
-    h3.markdown("**Original Wastes (m)**")
-    h4.markdown("**Reduced Wastes (m)**")
-    h5.markdown("**Opt. Cum. Waste (m)**")
-
-    for b in rows:
-        rls    = b["chain_rls"]
-        wastes = b["chain_wastes"]
-        reuse  = b["reuse"]
-        n      = len(rls)
-
-        # Component lengths — unchanged
-        len_str = " — ".join(f"{rl/1000:.2f}" for rl in rls)
-
-        # Original wastes
-        orig_str = " — ".join(
-            f"{w/1000:.2f}" if w is not None else "—" for w in wastes
-        )
-
-        # Reduced wastes column:
-        # - Wi becomes WRi = Wi - Lj  (show as bold with note)
-        # - Wj is struck through (eliminated — covered by Wi)
-        # - all others unchanged
-        if reuse:
-            i, j = reuse["i"], reuse["j"]
-            red_parts = []
-            for k, w in enumerate(wastes):
-                if k == i:
-                    red_parts.append(f"**{reuse['remainder']/1000:.2f}**")
-                elif k == j:
-                    red_parts.append(f"~~{w/1000:.2f}~~")
-                else:
-                    red_parts.append(f"{w/1000:.2f}" if w is not None else "—")
-            reuse_note = (
-                f"W{i+1}({reuse['wi_original']/1000:.2f}) covers "
-                f"L{j+1}({reuse['lj']/1000:.2f}) → "
-                f"WR{i+1}={reuse['remainder']/1000:.2f}, "
-                f"W{j+1} eliminated"
-            )
-            red_str = " — ".join(red_parts) + f"  \n_{reuse_note}_"
-        else:
-            red_str = orig_str + "  \n_No reuse possible_"
-
-        c1, c2, c3, c4, c5 = st.columns([1.8, 2.8, 2.8, 2.8, 1.8])
-        c1.write(f"{b['label']}*")
-        c2.write(len_str)
-        c3.write(orig_str)
-        c4.markdown(red_str)
-        c5.write(f"{b['opt_cum_waste']/1000:.2f}")
-
-# ══════════════════════════════════════════════════════════════════════════════
-# TOP BAR ENGINE
-# ══════════════════════════════════════════════════════════════════════════════
-# Splice points: LEFT zone of each span (near column, over support)
-# Each bar terminates at left_zone[q] + LapT
-# Terminal: travels through last span to right hook
-
-def top_children_of(parent, series_num):
-    if parent["is_terminal"] or parent["cl"] is None:
-        return []
-    p       = parent["span_idx"]
-    pcw     = parent["cum_waste"]
-    psuffix = parent["suffix"]
-    sn      = str(series_num)
-    pchain_rls    = parent["chain_rls"]
-    pchain_wastes = parent["chain_wastes"]
-    result  = []
-    sub     = 0
-
-    for q in range(p + 1, no_spans):
-        d  = clear_spans[p] - top_zones[p]["left"]
-        d += col_widths[p + 1]
-        for k in range(p + 1, q):
-            d += clear_spans[k] + col_widths[k + 1]
+# ── Top bar engine ─────────────────────────────────────────────────────────────
+def _top_children_of(parent, sn, no_spans, last, clear_spans, col_widths,
+                     top_zones, LapT, Emb, Hk, com_lengths):
+    if parent["is_terminal"] or parent["cl"] is None: return []
+    p=parent["span_idx"]; pcw=parent["cum_waste"]; psuffix=parent["suffix"]
+    prl=parent["chain_rls"]; pwt=parent["chain_wastes"]
+    result=[]; sub=0
+    for q in range(p+1, no_spans):
+        d = clear_spans[p] - top_zones[p]["left"] + col_widths[p+1]
+        for k in range(p+1, q): d += clear_spans[k] + col_widths[k+1]
         d += top_zones[q]["left"] + LapT
-        lbl = f"R{sn}{psuffix}{ALPHA[sub]}"
-        bar = make_bar(lbl, d, pcw, q, "left", False, psuffix+ALPHA[sub], pchain_rls, pchain_wastes)
-        result.append(bar); sub += 1
+        bar = _make_bar(f"R{sn}{psuffix}{ALPHA[sub]}", d, pcw, q, "left",
+                        False, psuffix+ALPHA[sub], com_lengths, prl, pwt)
+        result.append(bar); sub+=1
         if bar["cl"] is None: return result
-
     # Terminal
-    d  = clear_spans[p] - top_zones[p]["left"]
-    d += col_widths[p + 1]
-    for k in range(p + 1, last):
-        d += clear_spans[k] + col_widths[k + 1]
+    d = clear_spans[p] - top_zones[p]["left"] + col_widths[p+1]
+    for k in range(p+1, last): d += clear_spans[k] + col_widths[k+1]
     d += clear_spans[last] + Emb + Hk
-    lbl = f"R{sn}{psuffix}{ALPHA[sub]}"
-    bar = make_bar(lbl, d, pcw, last, "terminal", True, psuffix+ALPHA[sub], pchain_rls, pchain_wastes)
+    bar = _make_bar(f"R{sn}{psuffix}{ALPHA[sub]}", d, pcw, last, "terminal",
+                    True, psuffix+ALPHA[sub], com_lengths, prl, pwt)
     result.append(bar)
     return result
 
-def top_children_of_last_mid(parent, series_num):
-    if parent["is_terminal"] or parent["cl"] is None or parent["span_idx"] != last: return []
-    pcw=parent["cum_waste"]; psuffix=parent["suffix"]; sn=str(series_num)
-    pchain_rls=parent["chain_rls"]; pchain_wastes=parent["chain_wastes"]
+def _top_children_last_mid(parent, sn, last, clear_spans, top_zones, Emb, Hk, com_lengths):
+    if parent["is_terminal"] or parent["cl"] is None or parent["span_idx"]!=last: return []
+    pcw=parent["cum_waste"]; psuffix=parent["suffix"]
+    prl=parent["chain_rls"]; pwt=parent["chain_wastes"]
     d = clear_spans[last] - top_zones[last]["left"] + Emb + Hk
-    lbl = f"R{sn}{psuffix}A"
-    return [make_bar(lbl, d, pcw, last, "terminal", True, psuffix+"A", pchain_rls, pchain_wastes)]
+    return [_make_bar(f"R{sn}{psuffix}A", d, pcw, last, "terminal",
+                      True, psuffix+"A", com_lengths, prl, pwt)]
 
-def build_top_series():
-    r1 = []; sub = 0
+@st.cache_data(show_spinner="Computing top bar series…")
+def build_top_series(no_spans, clear_spans, col_widths, top_zones,
+                     LapT, Emb, Hk, com_lengths):
+    last = no_spans - 1
+    r1=[]; sub=0
     for j in range(no_spans):
         d = Emb
         for k in range(j): d += clear_spans[k] + col_widths[k+1]
         rl = Hk + d + top_zones[j]["left"] + LapT
-        lbl = f"R1{ALPHA[sub]}"
-        bar = make_bar(lbl, rl, 0, j, "left", False, ALPHA[sub], None, None)
-        r1.append(bar); sub += 1
+        bar = _make_bar(f"R1{ALPHA[sub]}", rl, 0, j, "left", False,
+                        ALPHA[sub], com_lengths, None, None)
+        r1.append(bar); sub+=1
         if bar["cl"] is None: break
-
     last_mid = next((b for b in reversed(r1) if not b["is_terminal"]), None)
-    if last_mid and last_mid["cl"] is not None and last_mid["span_idx"] == last:
+    if last_mid and last_mid["cl"] is not None and last_mid["span_idx"]==last:
         d = Emb
         for k in range(last): d += clear_spans[k] + col_widths[k+1]
         rl = Hk + d + clear_spans[last] + Emb + Hk
-        lbl = f"R1{ALPHA[sub]}"
-        bar = make_bar(lbl, rl, 0, last, "terminal", True, ALPHA[sub], last_mid["chain_rls"], last_mid["chain_wastes"])
+        bar = _make_bar(f"R1{ALPHA[sub]}", rl, 0, last, "terminal", True,
+                        ALPHA[sub], com_lengths, last_mid["chain_rls"], last_mid["chain_wastes"])
         r1.append(bar)
-
-    series = [r1]; parent_layer = r1; sn = 2
+    series=[r1]; parent_layer=r1; sn=2
     while True:
-        new = []
+        new=[]
         for parent in parent_layer:
             if parent["is_terminal"] or parent["cl"] is None: continue
-            kids = top_children_of_last_mid(parent, sn) if parent["span_idx"] == last else top_children_of(parent, sn)
+            if parent["span_idx"]==last:
+                kids = _top_children_last_mid(parent, sn, last, clear_spans,
+                                              top_zones, Emb, Hk, com_lengths)
+            else:
+                kids = _top_children_of(parent, sn, no_spans, last, clear_spans,
+                                        col_widths, top_zones, LapT, Emb, Hk, com_lengths)
             new.extend(kids)
         if not new: break
-        series.append(new); parent_layer = new; sn += 1
-        if sn > 30: break
+        series.append(new); parent_layer=new; sn+=1
+        if sn > 8: break   # cap at 8 series
     return series
 
-# ══════════════════════════════════════════════════════════════════════════════
-# BOTTOM BAR ENGINE
-# ══════════════════════════════════════════════════════════════════════════════
-# Splice points: per span there are TWO — left zone (near left support) and
-#                right zone (near right support), both at midspan side
-#
-# Splice point index: encoded as (span_idx, side) where side = "left" or "right"
-#
-# All points in order left-to-right:
-#   (0,left), (0,right), (1,left), (1,right), ..., (last,left), (last,right)
-#
-# Distance from LEFT HOOK to each splice point:
-#   (i, "left")  : Hk + Emb + [S0+C1+S1+C2+...+Si-1+Ci] + LapB
-#                  i.e. traverse spans 0..i-1 fully, then just LapB into span i
-#   (i, "right") : Hk + Emb + [S0+C1+...+Ci] + (Si - bot_zones[i]["right"]) + LapB
-#                  i.e. traverse spans 0..i-1 fully, then most of span i up to right zone
-#
-# R1 series: bars starting from left hook, terminating at each splice point in order
-#
-# Higher series: bar starts at the beginning of a splice zone (left or right of span p)
-#   From (p, "left"):
-#     next point (p, "right"): (S[p] - bot_zones[p]["left"] - bot_zones[p]["right"]) + LapB
-#     next point (q, "left") : (S[p] - bot_zones[p]["left"]) + C[p+1] + [interior] + LapB
-#     next point (q, "right"): (S[p] - bot_zones[p]["left"]) + C[p+1] + [interior] + (S[q]-bot[q]["right"]) + LapB
-#
-#   From (p, "right"):
-#     next point (p+1,"left") : bot_zones[p]["right"] + C[p+1] + LapB
-#     next point (p+1,"right"): bot_zones[p]["right"] + C[p+1] + (S[p+1]-bot[p+1]["right"]) + LapB
-#     next point (q,"left")   : bot_zones[p]["right"] + C[p+1] + S[p+1] + C[p+2] + ... + LapB
-#     next point (q,"right")  : ... + (S[q]-bot[q]["right"]) + LapB
-#
-# Terminal (from any splice point): travel remaining spans to right hook
-#   same as top bars: remainder_of_current_span + cols/spans + S[last] + Emb + Hk
-
-def _right_stop(i):
-    """
-    Distance from the LEFT face of span i to where a right-zone bar terminates.
-    Governed by min of:
-      - S[i] - bot_right[i] + LapB  (splice zone with lap)
-      - S[i] - 2*D[i]               (2D limit, no LapB)
-    Equivalently: S[i] - max(bot_right[i] - LapB, 2*D[i])
-    Returns the stop distance AND which remainder governs.
-    remainder = max(bot_right[i] - LapB, 2*D[i])
-    """
-    zone_stop = bot_zones[i]["right"] - LapB   # = bot_right[i] - LapB
+# ── Bottom bar engine ──────────────────────────────────────────────────────────
+def _right_stop_fn(i, clear_spans, bot_zones, beam_depths, LapB):
+    zone_stop = bot_zones[i]["right"] - LapB
     two_d     = 2 * beam_depths[i]
-    remainder = max(zone_stop, two_d)           # larger remainder = shorter bar
-    stop_dist = clear_spans[i] - remainder      # distance from left face to stop
-    return stop_dist, remainder                 # stop_dist includes the LapB if zone governs
+    remainder = max(zone_stop, two_d)
+    return clear_spans[i] - remainder, remainder
 
-def _right_remainder(i):
-    """Remainder of span i from the right-zone lap start to the end of the span."""
+def _right_remainder_fn(i, bot_zones, beam_depths, LapB):
     return max(bot_zones[i]["right"] - LapB, 2 * beam_depths[i])
 
-def _dist_from_bot_p_to_right_hook(p_span, p_side, p_remainder):
-    """
-    Distance from the lap start of (p_span, p_side) to the right hook.
-    p_remainder: remainder of span p (distance from lap start to end of span p).
-    """
-    d = p_remainder + col_widths[p_span + 1]
-    for k in range(p_span + 1, last):
-        d += clear_spans[k] + col_widths[k + 1]
+def _dist_bot_to_hook(p_span, p_remainder, col_widths, clear_spans, last, Emb, Hk):
+    d = p_remainder + col_widths[p_span+1]
+    for k in range(p_span+1, last): d += clear_spans[k] + col_widths[k+1]
     d += clear_spans[last] + Emb + Hk
     return d
 
-def _dist_between_bot_points(p_span, p_side, p_remainder, q_span, q_side):
-    """
-    Distance of a bar starting at the lap start of (p_span, p_side) and
-    terminating at the end of the lap at (q_span, q_side).
-
-    p_remainder: distance from lap start of p to end of span p.
-      - (p, left)  → p_remainder = S[p] - 2*D[p]
-      - (p, right) → p_remainder = max(bot_right[p] - LapB, 2*D[p])
-
-    Termination formulas:
-      (p, left) → (p, right): (S[p] - 2D[p]) - governed_stop + LapB_if_zone
-        = S[p] - 2D[p] - (S[p] - stop_dist) + ??
-        Simpler: bar length = stop_dist_from_left_face - 2D[p] + LapB_component
-        Actually: distance from lap start of (p,left) to stop of (p,right)
-        = (S[p] - 2D[p]) - _right_remainder(p)
-        but we still need +LapB if zone governs — which is baked into stop_dist already:
-        stop_dist = S[p] - remainder, and if zone governs the bar reaches S[p]-bot_right[i]+LapB
-        So: distance = stop_dist - 2*D[p]  [from 2D point to stop point, both measured from left face]
-      (p, left) → (q, left):  p_remainder + C[p+1] + [...] + 2*D[q] + LapB
-      (p, left) → (q, right): p_remainder + C[p+1] + [...] + stop_dist(q)
-      (p, right)→ (q, left):  p_remainder + C[p+1] + [...] + 2*D[q] + LapB
-      (p, right)→ (q, right): p_remainder + C[p+1] + [...] + stop_dist(q)
-    """
-    # Same span: (p,left) → (p,right)
-    if q_span == p_span and p_side == "left" and q_side == "right":
-        stop_dist, _ = _right_stop(p_span)
-        # distance from 2D[p] point to stop point (both from left face of span)
-        return stop_dist - 2 * beam_depths[p_span]
-
-    # Cross-span
-    d = p_remainder + col_widths[p_span + 1]
-    for k in range(p_span + 1, q_span):
-        d += clear_spans[k] + col_widths[k + 1]
-
-    if q_side == "left":
-        d += 2 * beam_depths[q_span] + LapB
-    else:  # right
-        stop_dist, _ = _right_stop(q_span)
+def _dist_between_bot(p_span, p_side, p_rem, q_span, q_side,
+                      clear_spans, col_widths, bot_zones, beam_depths, LapB):
+    if q_span==p_span and p_side=="left" and q_side=="right":
+        stop_dist, _ = _right_stop_fn(p_span, clear_spans, bot_zones, beam_depths, LapB)
+        return stop_dist - 2*beam_depths[p_span]
+    d = p_rem + col_widths[p_span+1]
+    for k in range(p_span+1, q_span): d += clear_spans[k] + col_widths[k+1]
+    if q_side=="left":
+        d += 2*beam_depths[q_span] + LapB
+    else:
+        stop_dist, _ = _right_stop_fn(q_span, clear_spans, bot_zones, beam_depths, LapB)
         d += stop_dist
-
     return d
 
-def bot_children_of(parent, series_num):
+def _bot_children_of(parent, sn, no_spans, last, clear_spans, col_widths,
+                     bot_zones, beam_depths, LapB, Emb, Hk, com_lengths):
     if parent["is_terminal"] or parent["cl"] is None: return []
-
-    p_span    = parent["span_idx"]
-    p_side    = parent["zone_side"]
-    pcw       = parent["cum_waste"]
-    psuffix   = parent["suffix"]
-    sn        = str(series_num)
-    pchain_rls    = parent["chain_rls"]
-    pchain_wastes = parent["chain_wastes"]
-    result    = []
-    sub       = 0
-
-    # p_remainder: distance from this bar's lap start to end of span p
-    if p_side == "left":
-        p_remainder = clear_spans[p_span] - 2 * beam_depths[p_span]
-    else:
-        p_remainder = _right_remainder(p_span)
-
-    # Generate all splice points to the right
-    points = []
-    if p_side == "left":
-        points.append((p_span, "right"))
-    for q in range(p_span + 1, no_spans):
-        points.append((q, "left"))
-        points.append((q, "right"))
-
+    p_span=parent["span_idx"]; p_side=parent["zone_side"]
+    pcw=parent["cum_waste"]; psuffix=parent["suffix"]
+    prl=parent["chain_rls"]; pwt=parent["chain_wastes"]
+    p_rem = (clear_spans[p_span] - 2*beam_depths[p_span] if p_side=="left"
+             else _right_remainder_fn(p_span, bot_zones, beam_depths, LapB))
+    result=[]; sub=0
+    points=[]
+    if p_side=="left": points.append((p_span,"right"))
+    for q in range(p_span+1, no_spans):
+        points.append((q,"left")); points.append((q,"right"))
     for (q_span, q_side) in points:
-        d   = _dist_between_bot_points(p_span, p_side, p_remainder, q_span, q_side)
-        lbl = f"R{sn}{psuffix}{ALPHA[sub]}"
-        bar = make_bar(lbl, d, pcw, q_span, q_side, False, psuffix+ALPHA[sub], pchain_rls, pchain_wastes)
-        result.append(bar); sub += 1
+        d = _dist_between_bot(p_span, p_side, p_rem, q_span, q_side,
+                              clear_spans, col_widths, bot_zones, beam_depths, LapB)
+        bar = _make_bar(f"R{sn}{psuffix}{ALPHA[sub]}", d, pcw, q_span, q_side,
+                        False, psuffix+ALPHA[sub], com_lengths, prl, pwt)
+        result.append(bar); sub+=1
         if bar["cl"] is None: return result
-
-    # Terminal
     if p_span < last:
-        d   = _dist_from_bot_p_to_right_hook(p_span, p_side, p_remainder)
-        lbl = f"R{sn}{psuffix}{ALPHA[sub]}"
-        bar = make_bar(lbl, d, pcw, last, "terminal", True, psuffix+ALPHA[sub], pchain_rls, pchain_wastes)
+        d = _dist_bot_to_hook(p_span, p_rem, col_widths, clear_spans, last, Emb, Hk)
+        bar = _make_bar(f"R{sn}{psuffix}{ALPHA[sub]}", d, pcw, last, "terminal",
+                        True, psuffix+ALPHA[sub], com_lengths, prl, pwt)
         result.append(bar)
     return result
 
-def bot_children_of_last_zone(parent, series_num):
-    """Parent is at (last, left) or (last, right) — terminal only."""
-    if parent["is_terminal"] or parent["cl"] is None: return []
-    if parent["span_idx"] != last: return []
-
-    pcw=parent["cum_waste"]; psuffix=parent["suffix"]; sn=str(series_num)
-    pchain_rls=parent["chain_rls"]; pchain_wastes=parent["chain_wastes"]
-    p_side = parent["zone_side"]
-
-    if p_side == "left":
-        p_remainder = clear_spans[last] - 2 * beam_depths[last]
-    else:
-        p_remainder = _right_remainder(last)
-
-    result = []; sub = 0
-
-    # If at (last, left), right zone of last span is still reachable
-    if p_side == "left":
-        d   = _dist_between_bot_points(last, "left", p_remainder, last, "right")
-        lbl = f"R{sn}{psuffix}{ALPHA[sub]}"
-        bar = make_bar(lbl, d, pcw, last, "right", False, psuffix+ALPHA[sub], pchain_rls, pchain_wastes)
-        result.append(bar); sub += 1
+def _bot_children_last(parent, sn, last, clear_spans, col_widths,
+                       bot_zones, beam_depths, LapB, Emb, Hk, com_lengths):
+    if parent["is_terminal"] or parent["cl"] is None or parent["span_idx"]!=last: return []
+    p_side=parent["zone_side"]; pcw=parent["cum_waste"]; psuffix=parent["suffix"]
+    prl=parent["chain_rls"]; pwt=parent["chain_wastes"]
+    p_rem = (clear_spans[last] - 2*beam_depths[last] if p_side=="left"
+             else _right_remainder_fn(last, bot_zones, beam_depths, LapB))
+    result=[]; sub=0
+    if p_side=="left":
+        d = _dist_between_bot(last, "left", p_rem, last, "right",
+                              clear_spans, col_widths, bot_zones, beam_depths, LapB)
+        bar = _make_bar(f"R{sn}{psuffix}{ALPHA[sub]}", d, pcw, last, "right",
+                        False, psuffix+ALPHA[sub], com_lengths, prl, pwt)
+        result.append(bar); sub+=1
         if bar["cl"] is None: return result
-
-    # Terminal from last zone
-    if p_side == "left":
-        term_d = p_remainder + Emb + Hk
-    else:
-        term_d = _right_remainder(last) + Emb + Hk
-
-    lbl = f"R{sn}{psuffix}{ALPHA[sub]}"
-    bar = make_bar(lbl, term_d, pcw, last, "terminal", True, psuffix+ALPHA[sub], pchain_rls, pchain_wastes)
+    term_d = p_rem + Emb + Hk
+    bar = _make_bar(f"R{sn}{psuffix}{ALPHA[sub]}", term_d, pcw, last, "terminal",
+                    True, psuffix+ALPHA[sub], com_lengths, prl, pwt)
     result.append(bar)
     return result
 
-def build_bot_series():
-    r1 = []; sub = 0
-
+@st.cache_data(show_spinner="Computing bottom bar series…")
+def build_bot_series(no_spans, clear_spans, col_widths, bot_zones, beam_depths,
+                     LapB, Emb, Hk, com_lengths):
+    last=no_spans-1; r1=[]; sub=0
     for i in range(no_spans):
-        # ── Left zone of span i ──
-        # Hk + Emb + [accumulated spans/cols] + 2*D[i] + LapB
         d = Emb
         for k in range(i): d += clear_spans[k] + col_widths[k+1]
-        rl = Hk + d + 2 * beam_depths[i] + LapB
-        lbl = f"R1{ALPHA[sub]}"
-        bar = make_bar(lbl, rl, 0, i, "left", False, ALPHA[sub], None, None)
-        r1.append(bar); sub += 1
+        rl = Hk + d + 2*beam_depths[i] + LapB
+        bar = _make_bar(f"R1{ALPHA[sub]}", rl, 0, i, "left", False,
+                        ALPHA[sub], com_lengths, None, None)
+        r1.append(bar); sub+=1
         if bar["cl"] is None: break
-
-        # ── Right zone of span i ──
-        # Hk + Emb + [accumulated] + stop_dist(i)
-        # stop_dist = S[i] - max(bot_right[i] - LapB, 2*D[i])
-        stop_dist, _ = _right_stop(i)
+        stop_dist, _ = _right_stop_fn(i, clear_spans, bot_zones, beam_depths, LapB)
         rl = Hk + d + stop_dist
-        lbl = f"R1{ALPHA[sub]}"
-        bar = make_bar(lbl, rl, 0, i, "right", False, ALPHA[sub], None, None)
-        r1.append(bar); sub += 1
+        bar = _make_bar(f"R1{ALPHA[sub]}", rl, 0, i, "right", False,
+                        ALPHA[sub], com_lengths, None, None)
+        r1.append(bar); sub+=1
         if bar["cl"] is None: break
-
-    # Terminal from last valid mid bar
     last_mid = next((b for b in reversed(r1) if not b["is_terminal"] and b["cl"] is not None), None)
     if last_mid:
-        lm_span = last_mid["span_idx"]; lm_side = last_mid["zone_side"]
-        if lm_side == "left":
-            p_rem = clear_spans[lm_span] - 2 * beam_depths[lm_span]
-        else:
-            p_rem = _right_remainder(lm_span)
-
-        if lm_span < last:
-            d = _dist_from_bot_p_to_right_hook(lm_span, lm_side, p_rem)
-        else:
-            d = p_rem + Emb + Hk
-
-        lbl = f"R1{ALPHA[sub]}"
-        bar = make_bar(lbl, d, 0, last, "terminal", True, ALPHA[sub], last_mid["chain_rls"], last_mid["chain_wastes"])
+        lm_span=last_mid["span_idx"]; lm_side=last_mid["zone_side"]
+        p_rem = (clear_spans[lm_span] - 2*beam_depths[lm_span] if lm_side=="left"
+                 else _right_remainder_fn(lm_span, bot_zones, beam_depths, LapB))
+        d = (_dist_bot_to_hook(lm_span, p_rem, col_widths, clear_spans, last, Emb, Hk)
+             if lm_span < last else p_rem + Emb + Hk)
+        bar = _make_bar(f"R1{ALPHA[sub]}", d, 0, last, "terminal", True,
+                        ALPHA[sub], com_lengths, last_mid["chain_rls"], last_mid["chain_wastes"])
         r1.append(bar)
-
-    series = [r1]; parent_layer = r1; sn = 2
+    series=[r1]; parent_layer=r1; sn=2
     while True:
-        new = []
+        new=[]
         for parent in parent_layer:
             if parent["is_terminal"] or parent["cl"] is None: continue
-            if parent["span_idx"] == last:
-                kids = bot_children_of_last_zone(parent, sn)
+            if parent["span_idx"]==last:
+                kids = _bot_children_last(parent, sn, last, clear_spans, col_widths,
+                                          bot_zones, beam_depths, LapB, Emb, Hk, com_lengths)
             else:
-                kids = bot_children_of(parent, sn)
+                kids = _bot_children_of(parent, sn, no_spans, last, clear_spans, col_widths,
+                                        bot_zones, beam_depths, LapB, Emb, Hk, com_lengths)
             new.extend(kids)
         if not new: break
-        series.append(new); parent_layer = new; sn += 1
-        if sn > 30: break
+        series.append(new); parent_layer=new; sn+=1
+        if sn > 8: break
     return series
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PRINT HELPER
+# DISPLAY HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
+def series_to_df(rows):
+    """Convert a list of bar dicts to a display DataFrame."""
+    data = []
+    for r in rows:
+        lbl = f"{r['label']}*" if r["is_terminal"] else r["label"]
+        if r["cl"] is None:
+            data.append({"Label": lbl, "Length (mm)": f"{r['rl']:,.2f}",
+                         "Com. Length (mm)": "EXCEEDED", "Waste (mm)": "—", "Cumul. Waste (mm)": "—"})
+        else:
+            data.append({"Label": lbl, "Length (mm)": f"{r['rl']:,.2f}",
+                         "Com. Length (mm)": f"{r['cl']:,.2f}",
+                         "Waste (mm)": f"{r['waste']:,.2f}",
+                         "Cumul. Waste (mm)": f"{r['cum_waste']:,.2f}"})
+    return pd.DataFrame(data)
+
 def print_all_series(all_series, zone_label_fn=None):
     for s_idx, series_bars in enumerate(all_series):
         sn = s_idx + 1
         st.markdown(f"### R{sn} Series")
         if sn == 1:
-            print_table(series_bars)
+            st.dataframe(series_to_df(series_bars), hide_index=True, use_container_width=True)
         else:
             groups = {}
             for bar in series_bars:
@@ -630,14 +408,70 @@ def print_all_series(all_series, zone_label_fn=None):
                 if parent_bar:
                     zlbl = zone_label_fn(parent_bar) if zone_label_fn else ""
                     st.markdown(f"**Splicing with {parent_bar['label']}** {zlbl}")
-                print_table(group)
+                st.dataframe(series_to_df(group), hide_index=True, use_container_width=True)
                 st.markdown("")
 
+def optimize_chain(chain_rls, chain_wastes):
+    best = None
+    for i, wi in enumerate(chain_wastes):
+        if wi is None or wi <= 0: continue
+        for j, lj in enumerate(chain_rls):
+            if j == i: continue
+            wj = chain_wastes[j]
+            if wj is None: continue
+            if wi >= lj:
+                saving = lj + wj
+                if best is None or saving > best["saving"]:
+                    best = {"i": i, "j": j, "wi_original": wi, "lj": lj,
+                            "wj": wj, "remainder": wi - lj, "saving": saving}
+    return best
+
+def print_summary(terminals, title, top_n=None):
+    if title: st.markdown(f"**{title}**")
+    st.markdown("_\\* = terminal bar. All values in metres (m)._")
+    if not terminals:
+        st.info("No complete chains found."); return
+    enhanced = []
+    for bar in terminals:
+        reuse   = optimize_chain(bar["chain_rls"], bar["chain_wastes"])
+        opt_cum = bar["cum_waste"] - reuse["saving"] if reuse else bar["cum_waste"]
+        enhanced.append({**bar, "reuse": reuse, "opt_cum_waste": opt_cum})
+    enhanced.sort(key=lambda b: b["opt_cum_waste"])
+    rows = enhanced[:top_n] if top_n else enhanced
+
+    data = []
+    for b in rows:
+        rls=b["chain_rls"]; wastes=b["chain_wastes"]; reuse=b["reuse"]
+        len_str  = " — ".join(f"{rl/1000:.2f}" for rl in rls)
+        orig_str = " — ".join(f"{w/1000:.2f}" if w is not None else "—" for w in wastes)
+        if reuse:
+            i,j = reuse["i"], reuse["j"]
+            red_parts = []
+            for k, w in enumerate(wastes):
+                if k==i:   red_parts.append(f"WR{i+1}={reuse['remainder']/1000:.2f}")
+                elif k==j: red_parts.append(f"W{j+1} elim.")
+                else:      red_parts.append(f"{w/1000:.2f}" if w is not None else "—")
+            red_str = " — ".join(red_parts)
+        else:
+            red_str = orig_str
+        data.append({"Label": f"{b['label']}*",
+                     "Component Lengths (m)": len_str,
+                     "Original Wastes (m)": orig_str,
+                     "Reduced Wastes (m)": red_str,
+                     "Opt. Cum. Waste (m)": f"{b['opt_cum_waste']/1000:.2f}"})
+    st.dataframe(pd.DataFrame(data), hide_index=True, use_container_width=True)
+
 # ══════════════════════════════════════════════════════════════════════════════
-# BUILD ALL SERIES
+# BUILD
 # ══════════════════════════════════════════════════════════════════════════════
-top_series = build_top_series()
-bot_series = build_bot_series()
+# Pass all inputs explicitly as tuples/scalars so cache keys work correctly
+top_series = build_top_series(
+    no_spans, clear_spans, tuple(col_widths), top_zones,
+    LapT, Emb, Hk, com_lengths)
+
+bot_series = build_bot_series(
+    no_spans, clear_spans, tuple(col_widths), bot_zones,
+    tuple(beam_depths), LapB, Emb, Hk, com_lengths)
 
 def collect_terminals(all_series):
     t = [b for s in all_series for b in s if b["is_terminal"] and b["cl"] is not None]
@@ -648,27 +482,25 @@ top_terminals = collect_terminals(top_series)
 bot_terminals = collect_terminals(bot_series)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TOP-5 SUMMARY OF SUMMARY
+# TOP-5 SUMMARY
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("---")
 st.subheader("⭐ Top 5 Best Cutting Combinations")
-st.markdown("_Ranked by cumulative waste. Full details in the summary section below._")
-
+st.markdown("_Ranked by optimised cumulative waste._")
 st.markdown("**Top Bars — Best 5**")
 print_summary(top_terminals, "", top_n=5)
-
 st.markdown("**Bottom Bars — Best 5**")
 print_summary(bot_terminals, "", top_n=5)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PRINT — TOP BARS
+# FULL SERIES — TOP BARS
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("---")
 st.subheader("Running Length Series — Top Bars")
 print_all_series(top_series, lambda b: f"*(Span {b['span_idx']+1} left zone)*")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PRINT — BOTTOM BARS
+# FULL SERIES — BOTTOM BARS
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("---")
 st.subheader("Running Length Series — Bottom Bars")
@@ -679,14 +511,12 @@ def bot_zone_lbl(b):
 print_all_series(bot_series, bot_zone_lbl)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SUMMARY
+# FULL SUMMARY
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("---")
 st.subheader("Summary — All Complete Chains Ranked by Cumulative Waste")
-
 st.markdown("#### Top Bars")
 print_summary(top_terminals, "Top Bar Chains")
-
 st.markdown("#### Bottom Bars")
 print_summary(bot_terminals, "Bottom Bar Chains")
 
